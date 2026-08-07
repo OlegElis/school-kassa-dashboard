@@ -81,7 +81,9 @@ for r in range(S_FIRST, S_LAST + 1):
     n = uch.cell(row=r, column=3).value
     if not n:
         continue
-    kids.append({"row": r, "col": MC + (r - S_FIRST), "no": len(kids) + 1, "raw": n, "name": pub(n),
+    # ord - позиция в журнале, то есть порядок по фамилии. Наружу уходит только число:
+    # оно служит скрытым ключом сортировки и вторичным ключом при равных суммах.
+    kids.append({"row": r, "col": MC + (r - S_FIRST), "ord": len(kids) + 1, "raw": n, "name": pub(n),
                  "prev": num(uch.cell(row=r, column=4).value),
                  "paid": num(uch.cell(row=r, column=5).value),
                  "debtY": num(uch.cell(row=r, column=7).value),
@@ -106,7 +108,8 @@ for r in range(B_FIRST, B_LAST + 1):
                 if vz.cell(row=vr, column=3).value == k["raw"]
                 and vz.cell(row=vr, column=4).value == title)
         dy, dn = num(dgy.cell(row=r, column=k["col"]).value), num(dgs.cell(row=r, column=k["col"]).value)
-        parts.append({"no": k["no"], "first": k["first"], "name": k["name"], "paid": p, "debtY": dy, "debtN": dn})
+        parts.append({"ord": k["ord"], "first": k["first"], "name": k["name"], "paid": p,
+                      "debtY": dy, "debtN": dn, "rest": p - share})
         k["by"].append({"sbor": title, "code": sb.cell(row=r, column=2).value or "",
                         "plan": per, "first": first, "paid": p,
                         "debtY": dy, "debtN": dn, "share": share, "rest": p - share})
@@ -280,9 +283,6 @@ PAGE = r"""<!DOCTYPE html>
  .note b{color:var(--ink);}
  h2{font-size:16px;margin:26px 0 10px;color:var(--accent);}
  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center;}
- .sortbox{margin:2px 0 8px;} .sortbox .slab{font-size:11px;color:var(--dim);
-  text-transform:uppercase;letter-spacing:.04em;margin-right:2px;}
- .chip.sc{padding:4px 12px;font-size:12.5px;}
  .chip{border:1px solid var(--line);background:var(--bg);border-radius:22px;padding:5px 14px;
        font:inherit;font-size:13px;color:var(--dim);cursor:pointer;
        display:inline-flex;align-items:center;min-height:44px;white-space:nowrap;}
@@ -299,10 +299,19 @@ PAGE = r"""<!DOCTYPE html>
              text-align:right;}
  .row-h .bal.neg{color:var(--bad);}
  .row-b{display:none;padding:2px 10px 12px;} .row.open .row-b{display:block;}
- .row-head{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fbfcfe;
+ /* gap и padding совпадают с .row-h, иначе заголовки не встают над своими колонками */
+ .row-head{display:flex;align-items:center;gap:7px;padding:0 11px;background:#fbfcfe;
            border-bottom:1px solid var(--line);font-size:10.5px;text-transform:uppercase;
            letter-spacing:.04em;color:var(--dim);font-weight:600;}
- .row-head .bal{color:var(--dim);font-weight:600;font-size:10.5px;}
+ .sh{border:0;background:transparent;font:inherit;font-size:10.5px;text-transform:uppercase;
+     letter-spacing:.04em;color:var(--dim);font-weight:600;cursor:pointer;padding:0;
+     display:flex;align-items:center;gap:3px;min-height:44px;white-space:nowrap;}
+ .sh[aria-pressed=true]{color:var(--accent);}
+ /* Стрелка занимает место всегда, даже пустая: иначе колонки дёргаются при смене сортировки */
+ .sh .ar{display:inline-block;min-width:9px;font-size:9px;line-height:1;}
+ .sh.nm{flex:1 1 auto;min-width:0;}
+ .sh.due{flex:none;min-width:66px;justify-content:flex-end;}
+ .sh.bal{flex:none;min-width:78px;justify-content:flex-end;}
  .pays{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;}
  .pays-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);
          font-weight:700;margin-bottom:4px;}
@@ -439,7 +448,6 @@ PAGE = r"""<!DOCTYPE html>
  <div id="pane-kids" hidden>
   <input class="search" id="q" type="search" placeholder="__SEARCHPH__" autocomplete="off">
   <div class="chips" id="chips"></div>
-  <div id="sortk"></div>
   <div id="kidlist"></div>
   <div class="hint" id="kidhint"></div>
   <div class="expl" id="ex-kids"></div>
@@ -478,25 +486,32 @@ document.getElementById('tiles').innerHTML=tiles.map(([l,v,c])=>
  `<div class="tile ${c}"><div class="lab">${l}</div><div class="val">${rub(v)}</div></div>`).join('');
 if(tiles.length===3)document.getElementById('tiles').style.gridTemplateColumns='repeat(3,1fr)';
 
-let SORT='name';
-const cmp=(a,b)=>SORT==='name'
- ? String(a.first||a.name).localeCompare(String(b.first||b.name),'ru')
- : (a.no||0)-(b.no||0);
-const sortChips=id=>`<div class="chips sortbox"><span class="slab">Сортировка</span>`+
- [['name','по имени'],['last','по фамилии']].map(([k,l])=>
-  `<button class="chip sc" data-sort="${k}" data-src="${id}" aria-pressed="${k===SORT}">${l}</button>`).join('')+
- `</div>`;
+// Сортировка одна на всю страницу: и список детей, и участники внутри сбора.
+// Первый клик по колонке даёт направление из SDEF, повторный - разворачивает.
+let SORT='name', SDIR=1;
+const SDEF={name:1,debt:-1,rest:1};
+// ord - порядок по фамилии, вторичный ключ: суммы часто совпадают (все должны по 2000),
+// и без него строки при равных значениях прыгали бы от перерисовки к перерисовке.
+const cmp=(a,b)=>{
+ let r;
+ if(SORT==='debt')r=(a.debtN||0)-(b.debtN||0);
+ else if(SORT==='rest')r=(a.rest||0)-(b.rest||0);
+ else r=String(a.first||a.name).localeCompare(String(b.first||b.name),'ru');
+ return (r*SDIR)||((a.ord||0)-(b.ord||0));};
+const sortHead=(key,label,cls)=>
+ `<button class="sh ${cls}" data-sort="${key}" aria-pressed="${SORT===key}">${label}<span
+   class="ar">${SORT===key?(SDIR===1?'▲':'▼'):''}</span></button>`;
 
 function renderSbory(){
 document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
  const pct=s.plan?Math.min(100,Math.round(s.collected/s.plan*100)):0;
  const done=s.parts.filter(p=>!p.debtN).length;
- const parts=[...s.parts].sort(cmp).map(p=>{
+ const parts=[...s.parts].sort(cmp).map((p,pi)=>{
   const cls=!p.debtN?(p.debtY?'':''):(p.paid?'part':'no');
   const right=p.debtN?`<span class="amt bad">нужно сейчас ${rub(p.debtN)}</span>`
     :(p.debtY?`<span class="amt soft">ещё ${rub(p.debtY)} за год</span>`
              :`<span class="amt ok">рассчитался</span>`);
-  return `<li><span class="dot ${cls}"></span><span class="idx">${p.no}</span>${esc(p.name)}
+  return `<li><span class="dot ${cls}"></span><span class="idx">${pi+1}</span>${esc(p.name)}
     <span class="tag">внёс ${rub(p.paid)}</span>${right}</li>`;}).join('');
  const sp=s.spends.length?s.spends.map(e=>`<li>${e.date?`<span class="tag">${esc(e.date)}</span>`:''}
    ${esc(e.what)}<span class="amt">${rub(e.amount)}</span>
@@ -520,7 +535,7 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
    <button class="btn" data-toggle="pp${i}" aria-expanded="false">Участники · внесли к сроку ${done} из ${s.parts.length}<span class="chev">▾</span></button>
    <button class="btn" data-toggle="ps${i}" aria-expanded="false">Расходы · ${s.spends.length}<span class="chev">▾</span></button>
   </div>
-  <div class="panel" id="pp${i}">${sortChips('sbory')}<ul class="list">${parts}</ul></div>
+  <div class="panel" id="pp${i}"><ul class="list">${parts}</ul></div>
   <div class="panel" id="ps${i}"><ul class="list">${sp}</ul></div></section>`;}).join('')
  ||'<div class="empty">Сборов пока нет.</div>';}
 renderSbory();
@@ -534,8 +549,9 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
  if(KFILTER==='ok')L=L.filter(k=>!k.debtN&&!k.debtY);
  document.getElementById('kidlist').innerHTML=L.length?`<div class="rows">
   <div class="row-head"><span class="idx"></span>
-   <span class="nm">Ученик</span><span class="bal">Остаток</span><span class="chev" style="visibility:hidden">▾</span></div>
-  ${L.map(k=>{
+   ${sortHead('name','Ученик','nm')}${sortHead('debt','Долг','due')}${sortHead('rest','Остаток','bal')}
+   <span class="chev" style="visibility:hidden">▾</span></div>
+  ${L.map((k,i)=>{
   // data-l дублирует заголовок столбца: на узких экранах thead скрыт, и подпись
   // берётся из атрибута через ::before (см. @media max-width:560px).
   const rows=k.by.map(b=>`<tr>
@@ -548,9 +564,13 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
     <td class="num" data-l="Доля расходов">${rub(b.share)}</td>
     <td class="num" data-l="Остаток"><b>${rub(b.rest)}</b></td></tr>`).join('')
    ||'<tr><td class="non" colspan="8" style="color:var(--dim)">Ни в одном сборе не участвует.</td></tr>';
-  return `<div class="row"><div class="row-h">
-    <span class="idx">${k.no}</span>
+  // Номер - позиция в текущем списке, а не закреплённый за ребёнком: пересчитывается
+  // при каждой сортировке и фильтрации. data-k держит скрытый ключ для восстановления
+  // раскрытых строк после перерисовки.
+  return `<div class="row" data-k="${k.ord}"><div class="row-h">
+    <span class="idx">${i+1}</span>
     <span class="nm">${esc(k.name)}</span>
+    <span class="due">${k.debtN?rub(k.debtN):''}</span>
     <span class="bal${k.rest<0?' neg':''}">${rub(k.rest)}</span>
     <span class="chev">▾</span></div>
    <div class="row-b">
@@ -592,7 +612,6 @@ document.getElementById('chips').addEventListener('click',e=>{
  KFILTER=c.dataset.chip;
  document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));
  renderKids(document.getElementById('q').value);});
-document.getElementById('sortk').innerHTML=sortChips('kids');
 renderKids('');
 document.getElementById('q').addEventListener('input',e=>renderKids(e.target.value));
 
@@ -602,10 +621,10 @@ const bd=D.kids.filter(k=>k.bday).map(k=>{
  const [d,m]=k.bday.split('.').map(Number);
  let y=TODAY.getFullYear(), next=new Date(y,m-1,d);
  if(next<TODAY)next=new Date(y+1,m-1,d);
- return {name:k.name,no:k.no,date:k.bday,in:Math.round((next-TODAY)/86400000)};});
+ return {name:k.name,date:k.bday,in:Math.round((next-TODAY)/86400000)};});
 if(D.teacher){const [td,tm]=D.teacher.date.split('.').map(Number);
  let ty=TODAY.getFullYear(),tn=new Date(ty,tm-1,td); if(tn<TODAY)tn=new Date(ty+1,tm-1,td);
- bd.push({...D.teacher,no:'',in:Math.round((tn-TODAY)/86400000)});}
+ bd.push({...D.teacher,in:Math.round((tn-TODAY)/86400000)});}
 bd.sort((a,b)=>a.in-b.in);
 const MONT=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август',
  'Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -703,16 +722,18 @@ document.addEventListener('click',e=>{
  const btn=e.target.closest('.btn[data-toggle]');
  if(btn){const p=document.getElementById(btn.dataset.toggle);
   btn.setAttribute('aria-expanded',String(p.classList.toggle('open')));return;}
- const sc=e.target.closest('.chip.sc');
- if(sc){SORT=sc.dataset.sort;
-  document.querySelectorAll('.chip.sc').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.sort===SORT)));
+ const sh=e.target.closest('.sh');
+ if(sh){const key=sh.dataset.sort;
+  if(SORT===key)SDIR=-SDIR; else {SORT=key; SDIR=SDEF[key];}
+  // перерисовка сбрасывает раскрытые панели и строки - запоминаем и возвращаем
   const open=[...document.querySelectorAll('#pane-sbory .panel.open')].map(p=>p.id);
   renderSbory(); open.forEach(id=>{const p=document.getElementById(id);
    if(p){p.classList.add('open');const b=document.querySelector(`[data-toggle="${id}"]`);
     if(b)b.setAttribute('aria-expanded','true');}});
-  document.getElementById('sortk').innerHTML=sortChips('kids');
+  const rows=[...document.querySelectorAll('#kidlist .row.open')].map(r=>r.dataset.k);
   renderKids(document.getElementById('q').value);
-  document.querySelectorAll('.chip.sc').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.sort===SORT)));
+  rows.forEach(k=>{const r=document.querySelector(`#kidlist .row[data-k="${k}"]`);
+   if(r)r.classList.add('open');});
   return;}
  const rh=e.target.closest('.row-h');
  if(rh)rh.parentElement.classList.toggle('open');});
