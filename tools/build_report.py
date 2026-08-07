@@ -169,17 +169,25 @@ PAGE = r"""<!DOCTYPE html>
  body{margin:0;background:var(--soft);color:var(--ink);
       font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;}
  .wrap{max-width:780px;margin:0 auto;padding:22px 14px 60px;}
- #gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+ #gate{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;
+       padding:20px;}
  .gcard{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:26px 24px;
         max-width:380px;width:100%;box-shadow:0 4px 24px rgba(22,24,29,.07);}
  .gh{margin:0 0 6px;font-size:19px;} .gp{margin:0 0 16px;color:var(--dim);font-size:14px;}
  #gform{display:flex;gap:8px;} #gform.busy{opacity:.5;pointer-events:none;}
+ /* 16px — иначе Safari на iOS зумит страницу при фокусе в поле */
  #gpass{flex:1;min-width:0;padding:11px 13px;border:1px solid var(--line);border-radius:9px;
-        font:inherit;font-size:15px;}
+        font:inherit;font-size:16px;min-height:44px;}
  #gform button{border:0;background:var(--accent);color:#fff;font:inherit;font-weight:600;
-               padding:11px 18px;border-radius:9px;cursor:pointer;}
+               padding:11px 18px;border-radius:9px;cursor:pointer;min-height:44px;}
  .gerr{color:var(--bad);font-size:13.5px;margin-top:10px;min-height:18px;}
- html{scroll-behavior:smooth;scrollbar-gutter:stable;overflow-y:scroll;}
+ html{scroll-behavior:smooth;}
+ /* Резерв под полосу прокрутки нужен только мыши: он держит контент на месте при
+    смене вкладок. На тач-экранах scrollbar-gutter не поддерживается, а overflow-y
+    на html ломает инерционную прокрутку и даёт второй скролл-контейнер. */
+ @media (hover:hover) and (pointer:fine){
+  html{scrollbar-gutter:stable;overflow-y:scroll;}
+ }
  header{padding:6px 0 18px;border-bottom:2px solid var(--accent);margin-bottom:18px;}
  h1{font-size:23px;margin:0 0 5px;letter-spacing:-.01em;}
  .sub{color:var(--dim);font-size:13.5px;}
@@ -189,11 +197,19 @@ PAGE = r"""<!DOCTYPE html>
  .tile .val{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;}
  .tile.rest{border-color:var(--good);} .tile.rest .val{color:var(--good);}
  .tile.owed{border-color:#e3c26b;} .tile.owed .val{color:var(--warn);}
- nav{display:flex;flex-wrap:wrap;gap:6px;background:var(--bg);border:1px solid var(--line);
+ /* nowrap: четыре вкладки при 375px переносились во вторую строку и съедали пол-экрана.
+    Если подписи всё же не влезают - панель прокручивается вбок, а не растёт вверх. */
+ nav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;background:var(--bg);
+     border:1px solid var(--line);
      border-radius:11px;padding:5px;margin-bottom:16px;position:sticky;top:8px;z-index:5;
-     box-shadow:0 2px 10px rgba(22,24,29,.06);}
- nav button{flex:1 1 auto;border:0;background:transparent;font:inherit;font-size:14.5px;padding:9px 6px;
-            border-radius:8px;cursor:pointer;color:var(--dim);}
+     box-shadow:0 2px 10px rgba(22,24,29,.06);
+     scrollbar-width:none;-ms-overflow-style:none;overscroll-behavior-x:contain;}
+ nav::-webkit-scrollbar{display:none;}
+ nav button{flex:1 0 auto;border:0;background:transparent;font:inherit;font-size:14.5px;padding:9px 6px;
+            border-radius:8px;cursor:pointer;color:var(--dim);white-space:nowrap;min-height:44px;}
+ @media(max-width:400px){
+  nav{gap:3px;padding:4px;} nav button{font-size:13.5px;padding:9px 3px;}
+ }
  nav button[aria-selected=true]{background:var(--accent);color:#fff;font-weight:600;}
  .card{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:13px 15px;
        margin-bottom:9px;}
@@ -210,8 +226,10 @@ PAGE = r"""<!DOCTYPE html>
  .stats b{color:var(--ink);font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap;}
  .stats b.good{color:var(--good);} .stats b.bad{color:var(--bad);}
  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;}
+ /* min-height:44px здесь и у чипов - минимальная цель для пальца (Apple HIG). */
  .btn{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:7px 12px;
-      font:inherit;font-size:13.5px;color:var(--accent);cursor:pointer;}
+      font:inherit;font-size:13.5px;color:var(--accent);cursor:pointer;
+      display:inline-flex;align-items:center;min-height:44px;text-align:left;}
  .btn:hover{background:#f3f6fc;} .btn[aria-expanded=true]{background:#eef2fa;font-weight:600;}
  .chev{display:inline-block;transition:transform .15s;margin-left:5px;font-size:11px;flex:none;}
  .btn[aria-expanded=true] .chev{transform:rotate(180deg);}
@@ -228,15 +246,27 @@ PAGE = r"""<!DOCTYPE html>
  .amt.soft{color:var(--dim);font-weight:400;}
  .tag{font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:20px;
       padding:1px 7px;white-space:nowrap;}
+ /* 16px по той же причине, что и #gpass: меньше - и Safari зумит при фокусе. */
  .search{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font:inherit;
-         font-size:15px;margin-bottom:10px;background:var(--bg);}
+         font-size:16px;margin-bottom:10px;background:var(--bg);min-height:44px;}
  .kid{background:var(--bg);border:1px solid var(--line);border-radius:11px;margin-bottom:7px;}
  .kid-h{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;}
  .kid-h .nm{font-weight:600;font-size:15px;}
  .kid-h .st{margin-left:auto;text-align:right;font-size:12.5px;color:var(--dim);white-space:nowrap;}
  .kid-h .st b{display:block;font-size:15px;color:var(--ink);}
  .kid-body{display:none;padding:0 14px 14px;} .kid.open .kid-body{display:block;}
- .scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+ /* Тени по краям показывают, что блок ещё прокручивается вбок: background-attachment:local
+    сдвигает «крышки» вместе с контентом, поэтому тень видна только с той стороны,
+    где есть непрокрученное. Чистый CSS, без скриптов. */
+ .scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;
+  background:
+   linear-gradient(to right,#fbfcfe 30%,rgba(251,252,254,0)) 0 0,
+   linear-gradient(to left,#fbfcfe 30%,rgba(251,252,254,0)) 100% 0,
+   radial-gradient(farthest-side at 0 50%,rgba(22,24,29,.16),rgba(22,24,29,0)) 0 0,
+   radial-gradient(farthest-side at 100% 50%,rgba(22,24,29,.16),rgba(22,24,29,0)) 100% 0;
+  background-repeat:no-repeat;
+  background-size:36px 100%,36px 100%,14px 100%,14px 100%;
+  background-attachment:local,local,scroll,scroll;}
  table{width:100%;min-width:640px;border-collapse:collapse;font-size:13px;}
  thead th{white-space:nowrap;vertical-align:bottom;line-height:1.2;}
  th{text-align:left;font-size:10.5px;text-transform:uppercase;color:var(--dim);font-weight:600;
@@ -252,14 +282,16 @@ PAGE = r"""<!DOCTYPE html>
  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center;}
  .sortbox{margin:2px 0 8px;} .sortbox .slab{font-size:11px;color:var(--dim);
   text-transform:uppercase;letter-spacing:.04em;margin-right:2px;}
- .chip.sc{padding:4px 10px;font-size:12.5px;}
- .chip{border:1px solid var(--line);background:var(--bg);border-radius:20px;padding:5px 12px;
-       font:inherit;font-size:13px;color:var(--dim);cursor:pointer;}
+ .chip.sc{padding:4px 12px;font-size:12.5px;}
+ .chip{border:1px solid var(--line);background:var(--bg);border-radius:22px;padding:5px 14px;
+       font:inherit;font-size:13px;color:var(--dim);cursor:pointer;
+       display:inline-flex;align-items:center;min-height:44px;white-space:nowrap;}
  .chip[aria-pressed=true]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;}
  .rows{background:var(--bg);border:1px solid var(--line);border-radius:11px;overflow:hidden;}
  .row{border-bottom:1px solid var(--line);}
  .row:last-child{border-bottom:none;}
- .row-h{display:flex;align-items:center;gap:7px;padding:9px 11px;cursor:pointer;font-size:14.5px;}
+ .row-h{display:flex;align-items:center;gap:7px;padding:9px 11px;cursor:pointer;font-size:14.5px;
+        min-height:44px;}
  .row-h .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
  .row-h .due{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700;color:var(--bad);
              font-size:13px;min-width:66px;text-align:right;}
@@ -293,8 +325,10 @@ PAGE = r"""<!DOCTYPE html>
  .hero-i{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:14.5px;flex-wrap:wrap;}
  .hero-i b{white-space:nowrap;} .hero-i .in{margin-left:auto;font-size:12.5px;color:var(--warn);}
  .hero.none{border-color:var(--line);color:var(--dim);font-size:14px;}
- .cal{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
- @media(min-width:560px){.cal{grid-template-columns:repeat(3,1fr);}}
+ /* minmax(0,1fr), а не 1fr: у 1fr минимум - min-content, и длинное название события
+    («Полная сумма 5000 ₽ - Учебный год 2026/2027») растягивало колонку шире экрана. */
+ .cal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+ @media(min-width:560px){.cal{grid-template-columns:repeat(3,minmax(0,1fr));}}
  .m{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px 10px;}
  .m.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
  .m h4{margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
@@ -303,7 +337,8 @@ PAGE = r"""<!DOCTYPE html>
  .m ul{list-style:none;margin:0;padding:0;font-size:12.5px;}
  .m li{display:flex;gap:6px;padding:2px 0;align-items:baseline;}
  .m li b{flex:none;min-width:17px;font-variant-numeric:tabular-nums;color:var(--dim);font-weight:600;}
- .m li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+ /* min-width:0 - иначе flex-элемент не сжимается и ellipsis не срабатывает. */
+ .m li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
  .m li.soon b,.m li.soon span{color:var(--warn);font-weight:700;}
  .m li i{font-style:normal;color:var(--dim);font-size:11px;}
  .m li.l-due b,.m li.l-due span{color:var(--bad);} .m li.l-due{font-weight:600;}
@@ -326,13 +361,38 @@ PAGE = r"""<!DOCTYPE html>
  .bd.soon{background:#fff8e6;} .bd.soon .in{color:var(--warn);font-weight:700;}
  .hint{margin:8px 2px 0;font-size:12.5px;color:var(--dim);line-height:1.45;}
  .hint b{color:var(--ink);font-weight:600;}
- .expl{margin-top:18px;} .btn.wide{width:100%;text-align:left;padding:10px 14px;}
+ .expl{margin-top:18px;}
+ .btn.wide{width:100%;text-align:left;padding:10px 14px;display:flex;justify-content:space-between;}
  .expl dl{margin:10px 0 0;background:var(--bg);border:1px solid var(--line);border-radius:11px;
           padding:4px 15px 12px;font-size:13.5px;}
  .expl dt{font-weight:700;margin-top:11px;} .expl dd{margin:2px 0 0;color:#4b5563;}
  footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--line);color:var(--dim);
         font-size:12.5px;}
- @media(max-width:560px){.tiles{grid-template-columns:1fr 1fr;}}
+ @media(max-width:560px){
+  .tiles{grid-template-columns:1fr 1fr;}
+  /* Имя + «внёс …» + «нужно сейчас …» в одну строку при 375px не помещаются:
+     разрешаем перенос, сумма остаётся прижатой вправо на второй строке. */
+  ul.list li{flex-wrap:wrap;row-gap:2px;}
+  /* Таблица по сборам ребёнка вместо прокрутки на 640px разбирается в карточки
+     «показатель - значение»: на телефоне боковой скролл внутри карточки не читается. */
+  .row-b .scroller{overflow-x:visible;background:none;}
+  .row-b table{min-width:0;}
+  .row-b thead{display:none;}
+  .row-b table,.row-b tbody,.row-b tr,.row-b td{display:block;}
+  .row-b tr{border:1px solid var(--line);border-radius:10px;margin-bottom:9px;
+            background:var(--bg);overflow:hidden;}
+  .row-b tr:last-child{margin-bottom:0;}
+  .row-b td{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+            padding:8px 11px;border-bottom:1px solid var(--line);text-align:right;}
+  .row-b tr td:last-child{border-bottom:none;}
+  .row-b td::before{content:attr(data-l);flex:none;text-align:left;color:var(--dim);
+                    font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;
+                    font-weight:600;line-height:1.6;}
+  .row-b td.hd{display:block;background:#eef2fa;font-weight:700;text-align:left;
+               font-size:13.5px;padding:9px 11px;}
+  .row-b td.hd::before,.row-b td.non::before{content:none;}
+  .row-b td.non{display:block;text-align:left;}
+ }
  @media print{
   body{background:#fff;} .wrap{max-width:none;padding:0;}
   nav,.acts,.search{display:none!important;}
@@ -476,16 +536,18 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
   <div class="row-head"><span class="idx"></span>
    <span class="nm">Ученик</span><span class="bal">Остаток</span><span class="chev" style="visibility:hidden">▾</span></div>
   ${L.map(k=>{
+  // data-l дублирует заголовок столбца: на узких экранах thead скрыт, и подпись
+  // берётся из атрибута через ::before (см. @media max-width:560px).
   const rows=k.by.map(b=>`<tr>
-    <td>${b.code?`<span class="code sm">${esc(b.code)}</span> `:''}${esc(b.sbor)}</td>
-    <td class="num">${rub(b.first)}</td>
-    <td class="num">${rub(b.plan)}</td>
-    <td class="num">${rub(b.paid)}</td>
-    <td class="num"${b.debtN?' style="color:var(--bad);font-weight:700"':''}>${b.debtN?rub(b.debtN):'-'}</td>
-    <td class="num">${b.debtY?rub(b.debtY):'-'}</td>
-    <td class="num">${rub(b.share)}</td>
-    <td class="num"><b>${rub(b.rest)}</b></td></tr>`).join('')
-   ||'<tr><td colspan="8" style="color:var(--dim)">Ни в одном сборе не участвует.</td></tr>';
+    <td class="hd">${b.code?`<span class="code sm">${esc(b.code)}</span> `:''}${esc(b.sbor)}</td>
+    <td class="num" data-l="Внести к сроку">${rub(b.first)}</td>
+    <td class="num" data-l="Всего за год">${rub(b.plan)}</td>
+    <td class="num" data-l="Внесено">${rub(b.paid)}</td>
+    <td class="num" data-l="Долг сейчас"${b.debtN?' style="color:var(--bad);font-weight:700"':''}>${b.debtN?rub(b.debtN):'-'}</td>
+    <td class="num" data-l="Ещё за год">${b.debtY?rub(b.debtY):'-'}</td>
+    <td class="num" data-l="Доля расходов">${rub(b.share)}</td>
+    <td class="num" data-l="Остаток"><b>${rub(b.rest)}</b></td></tr>`).join('')
+   ||'<tr><td class="non" colspan="8" style="color:var(--dim)">Ни в одном сборе не участвует.</td></tr>';
   return `<div class="row"><div class="row-h">
     <span class="idx">${k.no}</span>
     <span class="nm">${esc(k.name)}</span>
