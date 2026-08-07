@@ -74,6 +74,8 @@ S_FIRST, S_LAST, B_FIRST, B_LAST, MC = 6, 27, 6, 17, 4
 wb = load_workbook(SRC, data_only=True)
 sv, sb, uch, dgy, dgs, uc, vz, rs = (wb["Свод"], wb["Сборы"], wb["Ученики"], wb["Долги_год"],
                                      wb["Долги_срок"], wb["Участие"], wb["Взносы"], wb["Расходы"])
+gr = wb["График"]
+GR_FIRST, GR_LAST = 6, 45
 totals = {"collected": sv["C6"].value or 0, "spent": sv["C7"].value or 0,
           "rest": sv["C8"].value or 0, "dueNow": sv["C9"].value or 0,
           "dueYear": sv["C10"].value or 0}
@@ -85,6 +87,26 @@ def dt(x):
 
 def num(x):
     return x if isinstance(x, (int, float)) else 0
+
+
+def schedule(title):
+    """График платежей сбора с листа «График»: B сбор, C дата, D сумма, E комментарий.
+    Порядок в журнале не гарантирован, поэтому сортируем по дате сами."""
+    out = []
+    for r in range(GR_FIRST, GR_LAST + 1):
+        if gr.cell(row=r, column=2).value != title:
+            continue
+        d, amount = gr.cell(row=r, column=3).value, num(gr.cell(row=r, column=4).value)
+        if not d or not amount:
+            continue
+        out.append({"date": dt(d), "amount": amount,
+                    "note": gr.cell(row=r, column=5).value or ""})
+    return sorted(out, key=lambda x: x["date"].split(".")[::-1])
+
+
+def money(x):
+    """«1000» -> «1 000» неразрывным пробелом, как это делает rub() на странице."""
+    return f"{int(x):,}".replace(",", " ")
 
 
 kids = []
@@ -138,7 +160,8 @@ for r in range(B_FIRST, B_LAST + 1):
                   "debtY": num(sb.cell(row=r, column=12).value),
                   "debtN": num(sb.cell(row=r, column=13).value),
                   "spent": num(sb.cell(row=r, column=14).value),
-                  "rest": num(sb.cell(row=r, column=16).value), "parts": parts, "spends": spends})
+                  "rest": num(sb.cell(row=r, column=16).value), "parts": parts, "spends": spends,
+                  "sched": schedule(title)})
 
 for k in kids:
     k["pays"] = [{"date": dt(vz.cell(row=vr, column=2).value),
@@ -157,12 +180,17 @@ all_spends = [{"date": dt(rs.cell(row=e, column=2).value), "sbor": rs.cell(row=e
 TEACHER = {"name": "Учитель класса", "date": "30.08", "role": "учитель"}
 EVENTS = []
 for s in sbory:
-    if s["due"]:
+    if s["sched"]:
+        # В календарь идёт каждый шаг графика со своей суммой, а не только первый взнос.
+        # Отдельного события «полная сумма» больше нет: последний платёж - это просто
+        # последний шаг графика, а не самостоятельный показатель.
+        for step in s["sched"]:
+            EVENTS.append({"date": step["date"], "kind": "due", "code": s["code"],
+                           "title": f'Внести {money(step["amount"])} \u20bd - {s["title"]}'})
+    elif s["due"]:
+        # запасной путь: сбора нет на листе «График»
         EVENTS.append({"date": s["due"], "kind": "due", "code": s["code"],
-                       "title": f'Внести {int(s["first"]) if s["first"] else 0} \u20bd - {s["title"]}'})
-    if s.get("dueFull"):
-        EVENTS.append({"date": s["dueFull"], "kind": "due", "code": s["code"],
-                       "title": f'Полная сумма {int(s["per"]) if s["per"] else 0} \u20bd - {s["title"]}'})
+                       "title": f'Внести {money(s["first"])} \u20bd - {s["title"]}'})
     if s["event"]:
         EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
                        "title": s["title"]})
@@ -246,6 +274,16 @@ PAGE = r"""<!DOCTYPE html>
  .code{flex:none;font-size:11px;font-weight:700;color:var(--accent);background:#eef2fa;
        border-radius:6px;padding:3px 7px;margin-top:2px;}
  h3{font-size:16px;margin:0;} .meta{color:var(--dim);font-size:12.5px;margin-top:3px;}
+ /* График платежей. Разделитель «·» лежит ВНУТРИ шага и попадает под его nowrap,
+    поэтому при переносе точка уезжает вместе со своим шагом и не начинает строку,
+    а сам шаг не разрывается посередине. */
+ .sched{display:flex;flex-wrap:wrap;align-items:baseline;margin:11px 0 2px;font-size:13px;
+        line-height:1.7;}
+ .sched .st{white-space:nowrap;color:var(--ink);}
+ .sched .st:not(:last-child)::after{content:" · ";color:var(--line);white-space:pre;}
+ .sched .st b{font-variant-numeric:tabular-nums;font-weight:600;}
+ .sched .st.past{color:#a7aeb9;}
+ .sched .st.now{color:var(--warn);font-weight:700;}
  .bar{height:7px;background:var(--track);border-radius:99px;margin:11px 0 5px;overflow:hidden;}
  .bar i{display:block;height:100%;background:var(--accent);border-radius:99px;}
  .barlab{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim);}
@@ -527,6 +565,9 @@ const rub=n=>{n=Math.round((n||0)*100)/100;const s=Number.isInteger(n)?n.toLocal
   return s.replace(/ /g,' ')+' ₽';};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const T=D.t;
+// Дата отчёта: точка отсчёта и для графика платежей, и для календаря ниже.
+const TODAY=new Date(__YEAR__,__MONTH__-1,__DAY__);
+const parseD=s=>{const [d,m,y]=String(s).split('.').map(Number);return new Date(y,m-1,d);};
 const tiles=[['Собрано',T.collected,''],['Потрачено',T.spent,''],['Остаток',T.rest,'rest']];
 if(T.dueNow)tiles.push(['Надо к сроку',T.dueNow,'owed']);
 document.getElementById('tiles').innerHTML=tiles.map(([l,v,c])=>
@@ -564,13 +605,25 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
    ${esc(e.what)}<span class="amt">${rub(e.amount)}</span>
    <span class="tag">${esc(e.proof)}</span></li>`).join('')
   :'<li style="color:var(--dim)">Из этого сбора пока ничего не потрачено.</li>';
+ // График платежей заменяет обе денежные метки: и «по 2 000 ₽ до 25.08», и
+ // «всего 5 000 ₽ до 30.11» - оба факта видны в самих шагах. Без графика
+ // (сбора нет на листе «График») метки остаются как раньше.
+ const sc=s.sched||[];
+ const nextI=sc.findIndex(x=>parseD(x.date)>=TODAY);
+ const schedHtml=sc.length?`<div class="sched">${sc.map((x,i)=>{
+   const cls=i===nextI?'now':(parseD(x.date)<TODAY?'past':'');
+   return `<span class="st ${cls}"><b>${esc(x.date.slice(0,5))}</b> - ${rub(x.amount)}</span>`;
+  }).join('')}</div>`:'';
  const meta=[`${s.n} участников`];
  if(s.event)meta.push(`событие ${s.event.slice(0,5)}`);
- if(s.first)meta.push(`по ${rub(s.first)}${s.due?' до '+s.due.slice(0,5):''}`);
- if(s.per&&s.per!==s.first)meta.push(`всего ${rub(s.per)}${s.dueFull?' до '+s.dueFull.slice(0,5):' - платежами в течение года'}`);
+ if(!sc.length){
+  if(s.first)meta.push(`по ${rub(s.first)}${s.due?' до '+s.due.slice(0,5):''}`);
+  if(s.per&&s.per!==s.first)meta.push(`всего ${rub(s.per)}${s.dueFull?' до '+s.dueFull.slice(0,5):' - платежами в течение года'}`);
+ }
  return `<section class="card">
   <div class="card-top">${s.code?`<span class="code">${esc(s.code)}</span>`:''}
    <div><h3>${esc(s.title)}</h3><div class="meta">${meta.join(' · ')}</div></div></div>
+  ${schedHtml}
   ${s.plan?`<div class="bar"><i style="width:${pct}%"></i></div>
    <div class="barlab"><span>собрано ${rub(s.collected)} из ${rub(s.plan)}</span><span>${pct}%</span></div>`:''}
   <div class="stats">
@@ -664,7 +717,6 @@ renderKids('');
 document.getElementById('q').addEventListener('input',e=>renderKids(e.target.value));
 
 // дни рождения
-const TODAY=new Date(__YEAR__,__MONTH__-1,__DAY__);
 const bd=D.kids.filter(k=>k.bday).map(k=>{
  const [d,m]=k.bday.split('.').map(Number);
  let y=TODAY.getFullYear(), next=new Date(y,m-1,d);
@@ -778,6 +830,16 @@ document.addEventListener('click',e=>{
   return;}
  const btn=e.target.closest('.btn[data-toggle]');
  if(btn){const p=document.getElementById(btn.dataset.toggle);
+  // «Участники» и «Расходы» в одной карточке взаимоисключающи. Область поиска -
+  // .card, поэтому соседний сбор не трогается, а кнопка «Как это считается»
+  // лежит вне карточек и под это правило не попадает.
+  const card=btn.closest('.card');
+  if(card&&!p.classList.contains('open'))
+   card.querySelectorAll('.panel.open').forEach(o=>{
+    if(o===p)return;
+    o.classList.remove('open');
+    const ob=card.querySelector(`[data-toggle="${o.id}"]`);
+    if(ob)ob.setAttribute('aria-expanded','false');});
   btn.setAttribute('aria-expanded',String(p.classList.toggle('open')));return;}
  const sh=e.target.closest('.sh');
  if(sh){const key=sh.dataset.sort;
