@@ -176,6 +176,12 @@ PAGE = r"""<!DOCTYPE html>
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="referrer" content="no-referrer">
 <title>Касса класса 2В - отчёт на __ASOF__</title>
+<!-- Пути относительные и без ведущего слэша: сайт живёт в подпапке проекта
+     (olegelis.github.io/school-kassa-dashboard/), и «/assets/...» уехал бы
+     в корень домена, где ничего нет. -->
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#2f5496">
 <style>
  :root{--ink:#16181d;--dim:#6b7280;--line:#e6e8ec;--bg:#fff;--accent:#2f5496;--good:#0f766e;
        --bad:#b3261e;--warn:#8a6100;--soft:#f7f8fa;--track:#eef1f6;}
@@ -187,6 +193,9 @@ PAGE = r"""<!DOCTYPE html>
        padding:20px;}
  .gcard{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:26px 24px;
         max-width:380px;width:100%;box-shadow:0 4px 24px rgba(22,24,29,.07);}
+ /* Без этого блока человек видит голую форму и не понимает, куда попал. */
+ .gbrand{display:flex;align-items:center;gap:11px;margin-bottom:16px;}
+ .gname{font-size:17px;font-weight:700;letter-spacing:-.01em;min-width:0;}
  .gh{margin:0 0 6px;font-size:19px;} .gp{margin:0 0 16px;color:var(--dim);font-size:14px;}
  #gform{display:flex;gap:8px;} #gform.busy{opacity:.5;pointer-events:none;}
  /* 16px — иначе Safari на iOS зумит страницу при фокусе в поле */
@@ -203,6 +212,11 @@ PAGE = r"""<!DOCTYPE html>
   html{scrollbar-gutter:stable;overflow-y:scroll;}
  }
  header{padding:6px 0 18px;border-bottom:2px solid var(--accent);margin-bottom:18px;}
+ /* Логотип стоит рядом с блоком «заголовок + подзаголовок», а не рядом с одним
+    заголовком: иначе на узком экране подзаголовок переносится под логотип. */
+ .brand{display:flex;align-items:center;gap:12px;}
+ .logo{flex:none;width:40px;height:40px;display:block;}
+ .brand-t{min-width:0;}
  h1{font-size:23px;margin:0 0 5px;letter-spacing:-.01em;}
  .sub{color:var(--dim);font-size:13.5px;}
  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;}
@@ -304,25 +318,32 @@ PAGE = r"""<!DOCTYPE html>
  .row-h{display:flex;align-items:center;gap:7px;padding:9px 11px;cursor:pointer;font-size:14.5px;
         min-height:44px;}
  .row-h .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
- .row-h .due{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700;color:var(--bad);
-             font-size:13px;min-width:66px;text-align:right;}
- .row-h .bal{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700;min-width:78px;
-             text-align:right;}
+ /* Ширина фиксированная, а не min-width: при min-width базисом flex берёт содержимое,
+    и пустая ячейка «К сроку» даёт другой базис, чем «2 000 ₽» - строки расходятся
+    между собой и с заголовком. Те же числа продублированы у .sh.due и .sh.bal. */
+ .row-h .due{flex:none;width:72px;font-variant-numeric:tabular-nums;white-space:nowrap;
+             font-weight:700;color:var(--bad);font-size:13px;text-align:right;}
+ .row-h .bal{flex:none;width:78px;font-variant-numeric:tabular-nums;white-space:nowrap;
+             font-weight:700;text-align:right;}
  .row-h .bal.neg{color:var(--bad);}
  .row-b{display:none;padding:2px 10px 12px;} .row.open .row-b{display:block;}
  /* gap и padding совпадают с .row-h, иначе заголовки не встают над своими колонками */
+ /* letter-spacing живёт на .sh, а не здесь: у контейнера он растягивал скрытый
+    шеврон на полпикселя, и правый край заголовков уезжал относительно строк. */
  .row-head{display:flex;align-items:center;gap:7px;padding:0 11px;background:#fbfcfe;
            border-bottom:1px solid var(--line);font-size:10.5px;text-transform:uppercase;
-           letter-spacing:.04em;color:var(--dim);font-weight:600;}
+           color:var(--dim);font-weight:600;}
  .sh{border:0;background:transparent;font:inherit;font-size:10.5px;text-transform:uppercase;
      letter-spacing:.04em;color:var(--dim);font-weight:600;cursor:pointer;padding:0;
      display:flex;align-items:center;gap:3px;min-height:44px;white-space:nowrap;}
  .sh[aria-pressed=true]{color:var(--accent);}
  /* Стрелка занимает место всегда, даже пустая: иначе колонки дёргаются при смене сортировки */
  .sh .ar{display:inline-block;min-width:9px;font-size:9px;line-height:1;}
- .sh.nm{flex:1 1 auto;min-width:0;}
- .sh.due{flex:none;min-width:66px;justify-content:flex-end;}
- .sh.bal{flex:none;min-width:78px;justify-content:flex-end;}
+ /* flex:1 1 0, как у .row-h .nm: при разном flex-basis свободное место делится
+    по-разному и правый край заголовка расходится со строкой на пиксель. */
+ .sh.nm{flex:1 1 0;min-width:0;}
+ .sh.due{flex:none;width:72px;justify-content:flex-end;}
+ .sh.bal{flex:none;width:78px;justify-content:flex-end;}
  .pays{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;}
  .pays-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);
          font-weight:700;margin-bottom:4px;}
@@ -434,6 +455,10 @@ PAGE = r"""<!DOCTYPE html>
 </style></head><body>
  <div id="gate">
   <div class="gcard">
+   <div class="gbrand">
+    <img class="logo" src="assets/logo.svg" width="40" height="40" alt="">
+    <div class="gname">Касса класса 2В</div>
+   </div>
    <h2 class="gh">Доступ по коду</h2>
    <p class="gp">Отчёт закрыт от посторонних. Введите код, который дала Аня.</p>
    <form id="gform" autocomplete="on">
@@ -445,8 +470,12 @@ PAGE = r"""<!DOCTYPE html>
   </div>
  </div>
 <div class="wrap" id="app" hidden>
- <header><h1>Касса класса 2В</h1>
-  <div class="sub">Учебный год 2026/2027 · отчёт на __ASOF__ · казначей __TREAS__</div>
+ <header>
+  <div class="brand">
+   <img class="logo" src="assets/logo.svg" width="40" height="40" alt="">
+   <div class="brand-t"><h1>Касса класса 2В</h1>
+    <div class="sub">Учебный год 2026/2027 · отчёт на __ASOF__ · казначей __TREAS__</div></div>
+  </div>
  </header>
  <div class="tiles" id="tiles"></div>
  <span id="navtop"></span>
@@ -499,7 +528,7 @@ const rub=n=>{n=Math.round((n||0)*100)/100;const s=Number.isInteger(n)?n.toLocal
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const T=D.t;
 const tiles=[['Собрано',T.collected,''],['Потрачено',T.spent,''],['Остаток',T.rest,'rest']];
-if(T.dueNow)tiles.push(['Ждём к сроку',T.dueNow,'owed']);
+if(T.dueNow)tiles.push(['Надо к сроку',T.dueNow,'owed']);
 document.getElementById('tiles').innerHTML=tiles.map(([l,v,c])=>
  `<div class="tile ${c}"><div class="lab">${l}</div><div class="val">${rub(v)}</div></div>`).join('');
 if(tiles.length===3)document.getElementById('tiles').style.gridTemplateColumns='repeat(3,1fr)';
@@ -547,7 +576,7 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
   <div class="stats">
    <span>потрачено <b>${rub(s.spent)}</b></span>
    <span>остаток <b class="good">${rub(s.rest)}</b></span>
-   <span>ждём к сроку <b${s.debtN?' class="bad"':''}>${rub(s.debtN)}</b></span>
+   <span>не хватает к сроку <b${s.debtN?' class="bad"':''}>${rub(s.debtN)}</b></span>
   </div>
   <div class="acts">
    <button class="btn" data-toggle="pp${i}" aria-expanded="false">Участники · внесли к сроку ${done} из ${s.parts.length}<span class="chev">▾</span></button>
@@ -567,7 +596,7 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
  if(KFILTER==='ok')L=L.filter(k=>!k.debtN&&!k.debtY);
  document.getElementById('kidlist').innerHTML=L.length?`<div class="rows">
   <div class="row-head"><span class="idx"></span>
-   ${sortHead('name','Ученик','nm')}${sortHead('debt','Долг','due')}${sortHead('rest','Остаток','bal')}
+   ${sortHead('name','Ученик','nm')}${sortHead('debt','К сроку','due')}${sortHead('rest','Остаток','bal')}
    <span class="chev" style="visibility:hidden">▾</span></div>
   ${L.map((k,i)=>{
   // data-l дублирует заголовок столбца: на узких экранах thead скрыт, и подпись
@@ -577,7 +606,7 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
     <td class="num" data-l="Внести к сроку">${rub(b.first)}</td>
     <td class="num" data-l="Всего за год">${rub(b.plan)}</td>
     <td class="num" data-l="Внесено">${rub(b.paid)}</td>
-    <td class="num" data-l="Долг сейчас"${b.debtN?' style="color:var(--bad);font-weight:700"':''}>${b.debtN?rub(b.debtN):'-'}</td>
+    <td class="num" data-l="Не хватает к сроку"${b.debtN?' style="color:var(--bad);font-weight:700"':''}>${b.debtN?rub(b.debtN):'-'}</td>
     <td class="num" data-l="Ещё за год">${b.debtY?rub(b.debtY):'-'}</td>
     <td class="num" data-l="Доля расходов">${rub(b.share)}</td>
     <td class="num" data-l="Остаток"><b>${rub(b.rest)}</b></td></tr>`).join('')
@@ -602,7 +631,7 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
      <th class="num">Внести<br>к сроку</th>
      <th class="num">Всего<br>за год</th>
      <th class="num">Внесено</th>
-     <th class="num">Долг<br>сейчас</th>
+     <th class="num">Не хватает<br>к сроку</th>
      <th class="num">Ещё<br>за год</th>
      <th class="num">Доля<br>расходов</th>
      <th class="num">Остаток</th></tr></thead>
@@ -622,7 +651,8 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
 
 const cnt={all:D.kids.length,debt:D.kids.filter(k=>k.debtN>0).length,
  year:D.kids.filter(k=>!k.debtN&&k.debtY>0).length,ok:D.kids.filter(k=>!k.debtN&&!k.debtY).length};
-document.getElementById('chips').innerHTML=[['all','Все'],['debt','Должны к сроку'],
+// Подпись фильтра совпадает с плиткой: речь про один и тот же ненаступивший платёж
+document.getElementById('chips').innerHTML=[['all','Все'],['debt','Надо к сроку'],
  ['year','Только за год'],['ok','Рассчитались']].map(([k,l])=>
  `<button class="chip" data-chip="${k}" aria-pressed="${k==='all'}">${l} · ${cnt[k]}</button>`).join('');
 document.getElementById('chips').addEventListener('click',e=>{
@@ -738,6 +768,11 @@ document.addEventListener('click',e=>{
   ['bdays','sbory','kids','spends'].forEach(n=>{
    document.getElementById('pane-'+n).hidden=(n!==tab.dataset.tab);
    const ex=document.getElementById('ex-'+n); if(ex)ex.hidden=(n!==tab.dataset.tab);});
+  // «Как это считается» сворачивается при уходе с вкладки: вернувшись, человек
+  // видит её в исходном виде, а не с развёрнутым посреди экрана пояснением
+  document.querySelectorAll('.expl .panel.open').forEach(p=>{p.classList.remove('open');
+   const b=document.querySelector(`[data-toggle="${p.id}"]`);
+   if(b)b.setAttribute('aria-expanded','false');});
   const a=document.getElementById('navtop');
   if(window.scrollY>a.offsetTop-8)window.scrollTo({top:a.offsetTop-8});
   return;}
