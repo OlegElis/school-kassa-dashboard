@@ -38,6 +38,17 @@ except ValueError:
 STAMP = os.environ.get("STAMP") or datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
 
+PBKDF2_ITERS = 600000   # подставляется и в страницу через __ITERS__: расходиться нельзя
+
+
+def norm_pass(p: str) -> str:
+    """Нормализация кода перед выводом ключа: регистр не важен, краевые пробелы срезаются.
+    Родители набирают код на телефоне, где включена автозаглавная буква и легко
+    прилетает пробел из буфера. Ровно то же делает decryptPayload на странице -
+    иначе сборка и страница выведут разные ключи и отчёт не откроется."""
+    return p.strip().lower()
+
+
 def encrypt_payload(plaintext: str, password: str) -> str:
     """AES-256-GCM, ключ из PBKDF2-SHA256. Возвращает base64(salt|iv|ciphertext)."""
     import base64
@@ -46,8 +57,8 @@ def encrypt_payload(plaintext: str, password: str) -> str:
     from cryptography.hazmat.primitives import hashes
     salt = os.urandom(16)               # новые при каждой сборке: повтор nonce ломает GCM
     iv = os.urandom(12)
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=250000)
-    key = kdf.derive(password.encode())
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=PBKDF2_ITERS)
+    key = kdf.derive(norm_pass(password).encode())
     ct = AESGCM(key).encrypt(iv, plaintext.encode(), None)
     return base64.b64encode(salt + iv + ct).decode()
 
@@ -419,11 +430,11 @@ PAGE = r"""<!DOCTYPE html>
 </style></head><body>
  <div id="gate">
   <div class="gcard">
-   <h2 class="gh">Доступ по слову</h2>
-   <p class="gp">Отчёт закрыт от посторонних. Введите слово, которое дала Аня.</p>
+   <h2 class="gh">Доступ по коду</h2>
+   <p class="gp">Отчёт закрыт от посторонних. Введите код, который дала Аня.</p>
    <form id="gform" autocomplete="on">
     <input id="gpass" type="password" name="password" autocomplete="current-password"
-           placeholder="кодовое слово" autocapitalize="off" autocorrect="off" spellcheck="false">
+           placeholder="код" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button type="submit">Открыть</button>
    </form>
    <div class="gerr" id="gerr"></div>
@@ -463,11 +474,14 @@ PAGE = r"""<!DOCTYPE html>
 const RAW=__DATA__;
 
 async function decryptPayload(b64, pass){
+ // Та же нормализация, что в norm_pass() генератора: регистр не важен, пробелы срезаются.
+ // Меняется здесь - меняется и там, иначе ключи разойдутся и страница не откроется.
+ const norm=String(pass).trim().toLowerCase();
  const bin=Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
  const salt=bin.slice(0,16), iv=bin.slice(16,28), ct=bin.slice(28);
- const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pass),'PBKDF2',false,['deriveKey']);
+ const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(norm),'PBKDF2',false,['deriveKey']);
  const key=await crypto.subtle.deriveKey(
-   {name:'PBKDF2',salt:salt,iterations:250000,hash:'SHA-256'},km,
+   {name:'PBKDF2',salt:salt,iterations:__ITERS__,hash:'SHA-256'},km,
    {name:'AES-GCM',length:256},false,['decrypt']);
  const out=await crypto.subtle.decrypt({name:'AES-GCM',iv:iv},key,ct);
  return JSON.parse(new TextDecoder().decode(out));
@@ -748,10 +762,10 @@ document.addEventListener('click',e=>{
  f.addEventListener('submit', async ev=>{
   ev.preventDefault(); err.textContent=''; f.classList.add('busy');
   try{
-   const D=await decryptPayload(RAW.slice(4), inp.value.trim());
+   const D=await decryptPayload(RAW.slice(4), inp.value);
    g.remove(); const app=document.getElementById('app'); app.hidden=false; boot(D);
   }catch(e){
-   f.classList.remove('busy'); err.textContent='Неверное слово. Спросите у Ани.';
+   f.classList.remove('busy'); err.textContent='Неверный код. Спросите у Ани.';
    inp.select();
   }});
  inp.focus();
@@ -765,6 +779,7 @@ open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLO
                                         .replace("__TREAS__", "Анна Е." if MASK else "Анна Елисеева")
                                         .replace("__SEARCHPH__", "Найти по имени…" if MASK else "Найти по фамилии…")
                                         .replace("__STAMP__", STAMP)
+                                        .replace("__ITERS__", str(PBKDF2_ITERS))
                                         .replace("__YEAR__", str(AS_OF.year))
                                         .replace("__MONTH__", str(AS_OF.month))
                                         .replace("__DAY__", str(AS_OF.day)))
