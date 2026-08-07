@@ -1,9 +1,142 @@
-<!DOCTYPE html>
+# -*- coding: utf-8 -*-
+"""Интерактивный отчёт для родителей. Собирается ИЗ журнала кассы, руками не правится."""
+import datetime, json
+from openpyxl import load_workbook
+
+import os as _os
+SRC = _os.environ.get("SRC", "/home/claude/Касса_2В_2026-2027.xlsx")
+OUT = _os.environ.get("OUT", "/home/claude/index.html")
+AS_OF = datetime.date(2026, 8, 7)
+import os
+STAMP = os.environ.get("STAMP", "-")
+MASK = os.environ.get("MASK") == "1"
+PASSWORD = os.environ.get("PASSWORD", "")
+
+
+def encrypt_payload(plaintext: str, password: str) -> str:
+    """AES-256-GCM, ключ из PBKDF2-SHA256. Возвращает base64(salt|iv|ciphertext)."""
+    import base64
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    salt = os.urandom(16)               # новые при каждой сборке: повтор nonce ломает GCM
+    iv = os.urandom(12)
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=250000)
+    key = kdf.derive(password.encode())
+    ct = AESGCM(key).encrypt(iv, plaintext.encode(), None)
+    return base64.b64encode(salt + iv + ct).decode()
+
+
+def pub(n):
+    """Публичная форма имени: «Елисеев Артур» -> «Артур Е.». Фамилия не раскрывается."""
+    if not MASK or not n:
+        return n
+    parts = str(n).split()
+    return f"{parts[1]} {parts[0][0]}." if len(parts) > 1 else n
+S_FIRST, S_LAST, B_FIRST, B_LAST, MC = 6, 27, 6, 17, 4
+
+wb = load_workbook(SRC, data_only=True)
+sv, sb, uch, dgy, dgs, uc, vz, rs = (wb["Свод"], wb["Сборы"], wb["Ученики"], wb["Долги_год"],
+                                     wb["Долги_срок"], wb["Участие"], wb["Взносы"], wb["Расходы"])
+totals = {"collected": sv["C6"].value or 0, "spent": sv["C7"].value or 0,
+          "rest": sv["C8"].value or 0, "dueNow": sv["C9"].value or 0,
+          "dueYear": sv["C10"].value or 0}
+
+
+def dt(x):
+    return x.strftime("%d.%m.%Y") if hasattr(x, "strftime") else ""
+
+
+def num(x):
+    return x if isinstance(x, (int, float)) else 0
+
+
+kids = []
+for r in range(S_FIRST, S_LAST + 1):
+    n = uch.cell(row=r, column=3).value
+    if not n:
+        continue
+    kids.append({"row": r, "col": MC + (r - S_FIRST), "no": len(kids) + 1, "raw": n, "name": pub(n),
+                 "prev": num(uch.cell(row=r, column=4).value),
+                 "paid": num(uch.cell(row=r, column=5).value),
+                 "debtY": num(uch.cell(row=r, column=7).value),
+                 "debtN": num(uch.cell(row=r, column=8).value),
+                 "share": num(uch.cell(row=r, column=9).value),
+                 "rest": num(uch.cell(row=r, column=10).value),
+                 "bday": str(uch.cell(row=r, column=11).value or "")[:5],
+                 "first": (n.split()[1] if len(n.split()) > 1 else n), "by": []})
+
+sbory = []
+for r in range(B_FIRST, B_LAST + 1):
+    title = sb.cell(row=r, column=3).value
+    if not title:
+        continue
+    per, first = num(sb.cell(row=r, column=4).value), num(sb.cell(row=r, column=5).value)
+    share = num(sb.cell(row=r, column=15).value)
+    parts = []
+    for k in kids:
+        if uc.cell(row=r, column=k["col"]).value != 1:
+            continue
+        p = sum(num(vz.cell(row=vr, column=5).value) for vr in range(6, 86)
+                if vz.cell(row=vr, column=3).value == k["raw"]
+                and vz.cell(row=vr, column=4).value == title)
+        dy, dn = num(dgy.cell(row=r, column=k["col"]).value), num(dgs.cell(row=r, column=k["col"]).value)
+        parts.append({"no": k["no"], "first": k["first"], "name": k["name"], "paid": p, "debtY": dy, "debtN": dn})
+        k["by"].append({"sbor": title, "code": sb.cell(row=r, column=2).value or "",
+                        "plan": per, "first": first, "paid": p,
+                        "debtY": dy, "debtN": dn, "share": share, "rest": p - share})
+    spends = [{"date": dt(rs.cell(row=e, column=2).value), "what": rs.cell(row=e, column=4).value or "",
+               "amount": num(rs.cell(row=e, column=6).value),
+               "proof": str(rs.cell(row=e, column=9).value or "со слов").lower()}
+              for e in range(6, 66)
+              if rs.cell(row=e, column=3).value == title and rs.cell(row=e, column=6).value]
+    sbory.append({"code": sb.cell(row=r, column=2).value or "", "title": title, "per": per,
+                  "first": first, "due": dt(sb.cell(row=r, column=6).value),
+                  "dueFull": dt(sb.cell(row=r, column=7).value),
+                  "event": dt(sb.cell(row=r, column=8).value),
+                  "n": num(sb.cell(row=r, column=9).value), "plan": num(sb.cell(row=r, column=10).value),
+                  "collected": num(sb.cell(row=r, column=11).value),
+                  "debtY": num(sb.cell(row=r, column=12).value),
+                  "debtN": num(sb.cell(row=r, column=13).value),
+                  "spent": num(sb.cell(row=r, column=14).value),
+                  "rest": num(sb.cell(row=r, column=16).value), "parts": parts, "spends": spends})
+
+for k in kids:
+    k["pays"] = [{"date": dt(vz.cell(row=vr, column=2).value),
+                  "sbor": vz.cell(row=vr, column=4).value or "",
+                  "amount": num(vz.cell(row=vr, column=5).value),
+                  "way": vz.cell(row=vr, column=6).value or ""}
+                 for vr in range(6, 86)
+                 if vz.cell(row=vr, column=3).value == k["raw"] and vz.cell(row=vr, column=5).value]
+
+all_spends = [{"date": dt(rs.cell(row=e, column=2).value), "sbor": rs.cell(row=e, column=3).value or "не привязан",
+               "what": rs.cell(row=e, column=4).value or "", "cat": rs.cell(row=e, column=5).value or "без направления",
+               "amount": num(rs.cell(row=e, column=6).value),
+               "proof": str(rs.cell(row=e, column=9).value or "со слов").lower()}
+              for e in range(6, 66) if rs.cell(row=e, column=6).value]
+
+TEACHER = {"name": "Учитель класса", "date": "30.08", "role": "учитель"}
+EVENTS = []
+for s in sbory:
+    if s["due"]:
+        EVENTS.append({"date": s["due"], "kind": "due", "code": s["code"],
+                       "title": f'Внести {int(s["first"]) if s["first"] else 0} \u20bd - {s["title"]}'})
+    if s.get("dueFull"):
+        EVENTS.append({"date": s["dueFull"], "kind": "due", "code": s["code"],
+                       "title": f'Полная сумма {int(s["per"]) if s["per"] else 0} \u20bd - {s["title"]}'})
+    if s["event"]:
+        EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
+                       "title": s["title"]})
+DATA = json.dumps({"t": totals, "teacher": TEACHER, "events": EVENTS, "sbory": sbory, "spends": all_spends,
+                   "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
+                  ensure_ascii=False)
+
+PAGE = r"""<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="referrer" content="no-referrer">
-<title>Касса класса 2В - отчёт на 07.08.2026</title>
+<title>Касса класса 2В - отчёт на __ASOF__</title>
 <style>
  :root{--ink:#16181d;--dim:#6b7280;--line:#e6e8ec;--bg:#fff;--accent:#2f5496;--good:#0f766e;
        --bad:#b3261e;--warn:#8a6100;--soft:#f7f8fa;--track:#eef1f6;}
@@ -204,7 +337,7 @@
  </div>
 <div class="wrap" id="app" hidden>
  <header><h1>Касса класса 2В</h1>
-  <div class="sub">Учебный год 2026/2027 · отчёт на 07.08.2026 · казначей Анна Е.</div>
+  <div class="sub">Учебный год 2026/2027 · отчёт на __ASOF__ · казначей __TREAS__</div>
  </header>
  <div class="tiles" id="tiles"></div>
  <span id="navtop"></span>
@@ -219,7 +352,7 @@
  <div id="pane-sbory" hidden></div>
  <div class="expl" id="ex-sbory" hidden></div>
  <div id="pane-kids" hidden>
-  <input class="search" id="q" type="search" placeholder="Найти по имени…" autocomplete="off">
+  <input class="search" id="q" type="search" placeholder="__SEARCHPH__" autocomplete="off">
   <div class="chips" id="chips"></div>
   <div id="sortk"></div>
   <div id="kidlist"></div>
@@ -229,12 +362,12 @@
  <div id="pane-spends" hidden></div>
  <div class="expl" id="ex-spends" hidden></div>
 
- <footer>Сформировано 07.08.2026 автоматически из журнала «Касса_2В_2026-2027.xlsx».
-  Цифры руками не набираются. Версия 08.08.2026 00:30.</footer>
+ <footer>Сформировано __ASOF__ автоматически из журнала «Касса_2В_2026-2027.xlsx».
+  Цифры руками не набираются. Версия __STAMP__.</footer>
  </div>
 </div>
 <script>
-const RAW="ENC:Liywg043xavoirv2+YVHqRKk+zESFrNBfcXq0GZhZ8kwiD+6LoeCJA+cWmiT9tbFTa0zs2U6Gb+gbdoBoVoHOP+iIZgIn8GmLQb4VY7YeZlTVVKlnoIZLTyWnIJ+itXRZr06XPOq1jRz9ZkrRatsLDWlojYpr8zJr6ppnlm/mI2x3PgaEzQZqvWptYFV5HmvkCyPrdPLdBFJGc8uf+iA1zJluJjUpg4jAxRFWAVLRs69FsfzmXT2icNP+MMEkTlW3vl1T9DmXIAbQSva0S6bueLxGzy7U2OvwiZDtwHRFecWmuLphbg0m7SxRFY+Py0iuEqN+6GB37wLyEkiyx90RUgmaJh8hVn2lARF2s0RGaP+vyu5h2088y9Ukpo4xrrRWcxIc6jeiPGqiVtO09ZDGCsNyfuJFsGQM4mavveU1O6BjtkPsVzTi/Z3KkjwCTetu7JOR8EFPNFuh3IwhJF6ItBZktTPT0KRO8pZn0hmRogAf2JgNueQJWUQgrpoE4y0j4s0/mrmtgTA6gPt2AzNvcMmysPnA0hZOPKP8+kH5BvPghaFhXur/B0L6EvQ0vVvbViWp7ThjjTHAgk0g9YqP4MaNeDZtKEzdezyTb9b3tMw7bXF2J+zYQiZfBLwJNgLc4TkGyzQekdCwnwil7eQTVfTlpmc4ci3WkUy2qHYJCeobOoaWv/qKBgiuLOHUvhJ9nqnTp8YYW3/OY9sthyLVoKmIQdW5YB64ji5TX4c5u9Vgjx29MgvMJjGxFvA6RobQBSTBi0TVISMdkTX5N6831+rV8b3P4OWRhPdVojo6ZXBQLpY7eeG7NU3MurDf+h9jI8FEy+yXxySHrfRK9Z9PtmQpC55M65+PjKgHzmCgacaP9kYyhQypVP8pZ1wQsI7N9afGgsxDtp+0nxCFKmafvo6ZmFJFU54m0t2ANVWAOtQgO1bbiwN3kQNNEdGejJDM2qgw79iktqN+fBEk+o3W26TH8jYcjn3OJUp3+pa9DSEvl+PLsYqpL15LTDbJLFyswsS9KFtaqkincBrrVZCV0I4jiREDjK0wset5v3rGiRXV3dXWqo7G6aXo2FpFxunVjTGKNN/Zv072usSuxilKTNoFFw8PbJMoT7BbbHnOuDJwMddVl7pL+KnZm1NmXLe5V4Tu993Oueb7h1srrFZiM4D+yEZvOZrsJckamFcBn1pl+G0PGQAgaY4GSz4Bq5x/qhGCKZEbI6HsmmzJC6BR5ZAcCsEWOjkMexfUr3vYzxkyeSduifqQLPS7GgboWMlWu15bwA8EjVULE7XAn/V83ZOrvhJ8qxqwt1fT8ZzK4M0Y1qE5DGmeG7aUxNw42QIAPpz37K94xs5zmxmHJDkJET6hBR1PlK23T4xcEf0XOAQZD0mInRowd6NbPxRIw4d7e6mxrBA8gg14lJPl36shxrHaBSw8V6gpyzd2g/qpTVAXoLmrc4gN7eQ550jQbOjADirO7UWj4K1Ggs0EMYRIYigD0/CoXpUwPBv4XOyvxBrC0bl8T0glr64jyaVYMDWiOfTVwltVNQEcbFY6L219Z4c7J7wtyjZgAnsRi4ErxB0iQULxgv7mlog6QWDf2kk21qdxQGryo4UWdN2IKOx7yUcxy3yYqKrMe9zxzplo7xOX6vO6EG7sVMdDqP+acWFmOC+ABJMgsb0McV74BMdAEJGUP55n3eu+U30wZWhOha4LpA72e4M+A6qAX4Pv9oelcYq5Aa/LKBjVjqQwhTwXLk6drr7HMZlXGWHAkHhWW2ujpk49t8u0DuV8BvlFwCRF+bq2wOmulVY/kdaLI9bUsemoEyGgybQrXV3e5T5qW4dlHhHWhA/6KunoSpJqlh/akwyWZjri8nBXZ3U9duV3UACIeRpGWJ5+LlyeJdOdBhiKZXPnm4x2z7OdQHkfyS3ZKNSlQAiJ2omraTwm/NqvecBZjp0GceU21lhNF7tdIKKj0hZAIwf3Fz/XIXYKSQi/DV+76QdehiCVSvezmSx2gsrz7bxozIn8mj4CRWoKmIDM6MCI8+K/MzONVrWbRQe+btRUTb/Rxvnod1vqpfd9OHkjmNKNBrf/u9w7yuBXQNviflv6xQTY6hXYtBfFQHWejzOz+mCC1CffnMjq8VEYh/t+rsc7J2jZc6bkK/UT3BZrbF4Sfpy0JHONoW6uxC2Vc8/457iXIWyxg8MtJLnpn64QYcZnM79ZyIkM1hEIpVJDsWaupT5wXYDwIF2uQLwGB8KNyts5QvKNaaiQ8CLypWdbm+FkFS52SjDsEHWPUx+Z1Xnx5IGoabpTgAQj1H0PINEPnNHJs1/l+9vOtSBf5VCJYiJlaGq4ioV9Ty1QFdCbUHJe69DBiIlY+IMwjLQx4nTuX8IuekjhiOYH0fnCjdco+cWq8ab103MoG+fojap/PgwXp802SkINw9X4hJuiI7OutgaQRlRKvswV9yyOojUoYS3h752Ue6SzPPeSMJwTVCG3QQr2QOBwJW0pjlMpxXe0ZRSXsOq3jDxHFdVF6rUGiTliMUwLxCFV3tVFc6kY4jb7+0gQU0pazM7ArtZRNrIBQFpZZTuS7cjvjaF+xqsXwgfywKFdnKxxn6VajjV9qKKHlSxs7wNzNQH8Y0Vcb4a0hYtpndLgR7r9u9MtmJxjLPklBxKQ37l8sJPnKizKjoW+hXyIGFylkAdoZyhO79LFnQQF0LDZ2Tu2nv9udKGxG7lmZ/oolnBtvp1CnSHNepg7zY61/Aw/d7T8fcBzSjdtApOsH2v6pGqRM1V3LKVeZ3ZsxhpQfsjIEyU13hk7vtl7AYp0r/+2AinOCm08WwKMNnSr4eesFC9YRY2hdcdZ6iQONx2zjgmOu/3h5aW7609oNdh/gNtgC8aOE2hNiViR1nYxHS7Y5H8x1Th/P8dt4f9cBFccvGGiCJFCACRVFlbyinLAq4vRkJ+rAztOOaYtJD7afmv7XY6kfly+LVx7jleywG5wVbbJLO7JKLA1B1rPgRlcSbW5Vb8FM9M6uEPV0QSrWU1wvXBvCfJsPk6P3cm/75b5FZ8ucoNxkRMr9StXMYenmw+yi5YAlzrBTu4REOIS7/KtV2HklM3XQ1nkg6KuUzdCZUZ1+r3aUdmzS4k5eeMMl9R618iHk32IVBSKIWQvaJwZ/v6dosjU/54lvl3UAFllEEbmztIgRnUz6QsJD7ao7KMnbM5X26Ug8ygpTDrjNjUmEu1SkDMDQumkuRwnuAoDn2DOjePlaczc/c309etuNi7mlH8n32/gU2F0uLhcAstX8DjaWlYBIWCjIMQvi93qaiMmdOLNk5GUfc6ZFMVBtojcd0uyixrq/mYAUF88jPE9rtEJ7BqGPh0K0kXZK0a8ZboEuufwpUs1fFxRJCqD0GDMkswSzgZO3iiFfJVI1FsEVHa6XkOz8kZ2e558b7hSqDCzVIG7VCCu4iKG4UnMdiMBk82ysOaca4i7HWJBhD1zuoFqSqPqrSfAmBgw8iyBK8p6TOEYlYM6sjipvOPdOc0PEx7KFkHfZpOBng4jaYicn6YzlV7Ed27zoQHodqh/VvXMFDY8xnJSRk9uYCNTiSxvxaJeqvjM0wT3OpDFkrTeeTc/FPzD9pSBlyEDa7uMXBcKa6cxiEx5AVIbDr+t9xCyStZUDv+BNyi9XztZ89D7Iz7QYKuxyi9o+VouB2cB/U2/+qAnFR3Xf3flBe7xQmcuIWDF17tcLfXUgCLBXuEMj+gQCuY9juKwUtk9y3gSaBXyVTnBRioRgQeVNNVl7IiH0iOq3cEZekseJ+/Hi6ScABmFxo7krbqfm3y1YVznEpN/a8CZzdU/C7/oR2XwC6s2RksuswHGMef/hvEjAU8HGPKgKwHNO9waFMH0+06J9jeMg8YTxDJJPjuxqSKdHUFPykb5eF0Iw8Fp7I1LNxd4VKr/NjD8sw8jTz5gwD9ltKMYZJqmBzSYMUITvNPdSUXmWVvBVLTyctP+iveOakPsbjQfQXq5Jjrpf77ch5mykIgFf8xZ5594LVWbeh56Cl5DCmvG+UJ+t9angQpJemJmKWcgcaGFtPwKtZtJmqYb41Ol3dBZgT8xguXoKAPeUQy1AHDq17e75bQ/ewsAetG3FGFWz9StczjQXzTxIrhejJkwTSU8nFK5ENp9HFyhLU0nCHDO8GPtXmcZwRQD/KOu6X2HZ4M3txgh8tbcJSXP9O4IP4gML9VFxhC8IE8xap2l3I16PZh7vgP1ErVVPoKqIgVWIl7HlVg3DplkrpGve6s821VArZYhbaUSmx9zV5XUxNQJynXKCoS+Bx8hF+tOlVg9+HkeMAVj4xx7dJ3dS6oX6+n3GJEHekp1fzTEfq/cm90OnjqDiX28sjng0+6hcmg/4i0OBu6lCbAxOv2PLOi7e87icUQ/DobatsLKjcs15+1KcNVskZkaHjzpF6XRS+1dFkpB8mrGaOCwtMk7KOQZTHmZfUQorNl3b/SoS4B0HcVRY0f8R/BwliQ7tt7eIXwx7NYjIL8MUiNPsHb4pw5yZuzUf2GJJbOMu9H92f5W+3jD9mI8t7L4dUvsaMDV6hNjdR1JovEvH0HqR+9goiq/tXr5tD4+QnLEpV1ZMbm1MNi+kEDnyX67wTWRyCRIykEAbAH453u2bG9Hqxh0pqI98Dhc8Fxg9w9roaSHwS5edHfub4/lBKWMDBNxDgfbOWlsTiBAdPVge5VhzsJI1gwltPdNgLaLc6MxxhNyM9oAtcNwZIWZQtaMzp1U1EfTlbjqz6TQJhWBZPj7QB8MktGfCG0Zy62Ttpm20sCvapBlxCflu8pM9VcaIOK6Jnk3Q1zps12BeddShQsy6irQ7evoZW6Gs0cNC7UTQ3TQKQPrRgAjadMfEI9DzV4qfnHMW9GqIGpZV9LDTXgs2iitFnK8w2CZcRqVd42NxS8QuAo2O0r5nn7hhhnQ2o1djL8OWDUY2jXDMJAhRjsGT1pxrqPWtl9LiSgaQtazUeHczawtEj+PoT1bJYsGVoCC1nfqkXqwFNjuX3AJ7ifR/XiXitAt5Upr9YCJt5F5r8bRQW78HgmsUhFGcv0YcQ2L74jxhr4aRLT5OILNKaNvVZmEsz9ltXZ+n4E0yI4BLYsbLQJ2REwso3+LLoqtKV/zWD7hwsiY7EAqm/8ML/hvpdPK3hx1HLu5Jryj/ct5BY/CPI/FxRO66hPNwLDGflGcjhVLOT5gUqxhNulZ7uz2fBKYkpWvnpJa0S5mtrX0Y961a0JWQSOfDqHk8YlW/ybjuLTiPtHPz5nL5rtSoCertXvXFZ63mjCiM3O4BXsRfx4PzbZZA6LBYgnxD1fcwtqpMxVX0x49RgIM6myZR0u0V9WymvdJHxsLyFD/6DaHMM/pvE7ELbHon3L6gWfpNiVPAqo0NQ8FeiI4BLO/6HOilRCpXkDltt9wR2nb9FkuAZSS92qEqAD9jOUxqmUJ4TTRewrBg7uOO9PqSPRleE+QGpIM3GuxqALDWWnJDt8jqqnzMNdK3wMqkjwvw1e4c/EudZsc3MeAlqH9eaPSCvEug/cBbkQYIWPCUvmPxpxd0isiixQiopDUPRjXdqowOHt1VyU0dmMg/HdhFzL100zVPtR5jlH3EwVdwCjwya7KwTjNWN0zMsZEIdHjrRsvrFd7p3RTkXSTg31/Bq+BC2bV2VUQ78Go06GB2g88k6JY+Pa0AQZbowgXWXs//v6lgOshqUFkeJEiWQnF52xIR1KCiD06gmiW+kkHmF6jy+kx1yD2b61hh6FHnqfZCCBMA59H/GZ+DujIHpDG/kWd1qwI4yn5dOqDosXTByX6LRYRkk24e/g+E9fTXNcKdzqVytDIhBZVpyOgvqLe1BZnMRa/OQ8cysgnQLqEDbLws33kUcx87IK23MilQPFSZXmvjRHJYst6FeS1lomYOwVcF1EUN7XczIrg0Yh/zPuAWFeHm57azVQQ38B7TDv9gOsZbxX0Yc1mGAiFmM8kKH1SRn/7/iaBggvOKKNAsNlZraAIAwJaOT94GO74zh4T2hU+JNN55aGj0wB+JUKubKzRAA0NTvyBnKhtwV9Y7IGthjF6jEjmqJ1pyY+MyRiD8WOozw46bfjJX7IGeCFH3vyI3ryxVomtwBX63D97pwleaq5ebCc1CxumJfXkymaUoUFu2WY3bbFvM4qZmODWfNe+q+DyGy2MtQkZ2N2VNUsFY1Zay+MUvaICty34xDQ+jXgIGM1aR62K+QRowEJfp3vO1TQNCf/z1OGS76Stju+onlQYYuUIvXegyzksS3tLomfujyiVI3B0+kO8auTSuEtYLdz5kkluSxD7zwqQp4QnY7JabWMfQ8FbOeuuso+mXt/9hjrBZFz+Qscx2CQw0rduILQK1l7S0426mlyPiLyTa+8Y4QUFZyHGEsrgmxxBA183x8upfeHx3oXGPDAIjUH6DXAR4Q7PRFBHRt9bGYBCFWbjxvWvfz5f4N56yjGXVFRLhfJfU/JcXuUe3yQ+P7OlSd30NykaBiwG+6+dOiRW++eCVe+LdeYOfyaKVzOnx463N+V4xTkgHLRX9RzhzkBRKk0ikp3DM74ZyftZisXGKCH/NyIMBXh4wxc7vrwhEuiWmzfxX/999Q2cu/dXkIHT0wSsZEEDXERQb7BxhFduB504F4OcqLjP7EKBO6d718Ji2GYKdMOV+yCnjhZfdKqd4GVDxURx7vjC3ie/WSclgy66v2zk8Gh7HrTBJlY5dOgeFYsfjpBmPqEAzhUClZK14PNOCvNN7/TI+9T/aqwfb47kYj9XVt4UvyJ1XnLgIs0tlrA2RFB11hLVbxPk+3E+RiQ+FFMJky2ZueMUMccG1S1+g48Nc4Dj0kI4HdpTqgYjnzCfCmqDAcPU6QTcc4FUmNL8b2VkSDAeZ2CQtB6ovqYE4I7OmjMFI0V2UxAmebrlLppNRPYFF0FqQ+lb04hrCBTSe+id0acfAbo6IIoZowdD78hbUiQxNZOzD6hVwCqH9mQIlB21XSYYFJXMg1AQPO4xKKybJp6U6mx/zkOx3teyj86Udm9eAlOjwpG/VY3P1RfBihjHZmvI1PlaDzWbLe04p+hfPs0M8/EtHsdrkb8zOGjw0Z7rFObIoLLG1ziSFnjAdQIKO6NWFTjzrz1xPLPVup/AaBLol/jCKCeLABDSaxSAyZ0wxoVXCjSKQYfmKXQwuesokyewY0Lqnm8QagfI/A/mWnac2LevCny0OYlLPld+7V76TQctdTtzjJlSkqD29bSubihToLHAbKH4sVzDpES+gXQ1Ue7HAblh99qg66ShlgdzIJo4ATM3v8XmWAzBOdaUR65MBXID8GMb0Ne/CEr07Y6jmtjiXGcB2BdMnI3vsE2UroEyPHh9iqpZFDX+zbdJvF5+2icmQxmKqzHGztnM5ORcPZZ0sxmCm+nVwJfAGexL6kvERtBccVC/WX+iKXMej2kRS8LlwwJ3KSvusrWTu6dCMHBjEksY3SbLfDqPE+ugwkh3ZQCW1Ti5JW52cVuRbEkNbxORkH1PKm0ZmUNOPE02QYaUqDcrO8cp+veRfsxYAXlnnEiXF1mMAp/HBXzkZr4b8tUML+1gvynt3ZmVzoQSnbZVlkH+NiV6RFy5O8OuIL6WMwlwT2DcEPbhOn4o1k8El26CwM5ZH+hafFSVgCc5Rur72UvJbSsImdYvfl6AwdoKFhg4tk5eBrljzr2kdKVpP0q6ZUHA4XvzS/8PZxD5VC4Kc50ofShCB3uRl8xQnYk6FZuG9rCr36+IIVF/47vR0vWBXEmcCLbG5k62u2zZu2XFUZHd/iP24uf/FRWQOLoCSHnxpVzd9PPXDIxgu3w78VZc/d0vCDhFIN+PBTJmZOsuXfJWTKDipiFENSPBAmoBFqcpxeyA881HLgNgqYioKw+3LGXXNIoSPGfUjjvJt+bkulJnwYt5egHTXIjzGv8Sqy+PCHWPx9TdPQKhc/BjaIinUjg3tweO3eEKDXJy/dCIvlnr4SAxkoKCegsymXPYdmxsjaNpE1pjQS8SUEKFRuhaj55eS13Z3pZbYc0P4oDtDXnyVjA+wkZFfXYIuF2PLiHCzvUBzi89kKK7cVnkas6JT/tPlUPoxx8uaBysIhdZ3AFR3CihDTqBZchz5aEzXswUl3gD++cqcx98cAh2YLEJ/e1k0VFBbJJA4Tbvdo5gneg6J0RUp7Tuq/VXXvlAwZgN1O8P6+VxeChqIBJjDVPBGlAVzlfx57w04fePimR/3qpEmLVCkrHII9oGl50Q8qMW/Wj0A2fC3dZYcvlDiV4kTUAS3TEtKy3WE+RA8ijeyMNPBDcyHJBeV/th8/L20hBYXRwKSduhRXAefQZwKlsQ315Sy3wG9wuxz3sdC3b7k5dXasm8efNQQcriqP9D8TDzV33Ra9hXg2TQBG13pWpUMehowF/GGAX78pt0t+IEdlDNktG4Fzgb59z7FcI2rI/0jPIuTerfut2gNq6VK1VfBK2W6S30YnGYOtsyC6konNI5xXzemWuEVA1K4jw0FFgnoJu3R63v7ktn1jlpbVCGe7jOfi/0Xp2mEtH2J4SEDRYPSbcr8wtESNMxmBKjNN1KTNalApGqBCSU5vSPQJRW7FweufoUjjF7kQBu7Dbq2q3kPrYhdjdC3gMgFPA4HanR8DFibEpD41tVUywT5CSIV5oyhIrimw1cutyUVT37Tcs4KjryaHoPCDPFB6zzHwYs5S0sq79Fnd6hZV2jP8lpZHFclRA2lD3dadvWKkThCUCgXutyGstBdbZmMvv0/1ySIAXc86pDgQN82FRZYNmQOPdYA+SLK7u9OF/Mc3U/gYVK28bBYI3rFIrprwZ9uHYDN8M2irqanWQFbmFBQInROmDaJLu3uwpDL+MNOujlpzXCyYJgSJ6uQNOEbYlLEKxD7yhfZGByy3r5t6VXm/Sb5TsTwNCfnRdwZX9HscgXNaWrCpTkoWHhFaXnKTzf4F9/JcjvCrpgvvyppmcExr+mJ3uSfxsaxmSu5cf0NNQVtqeHSPaKLAlMME9TkGbpdwXDVGbP80PvrUXJtMHsNQqvuAOv67JeF7TlVW3gRlDD5BlkgP8aLizj8z0Q4Gc5rf4kMDq/KP6UHZd0VvH/HW1Ersoe3M2/jROryFEyi9VrfFHhT2xykjmlcU6zGIJ13NN5YQYMxEsvFwfE/aYllVvE58qJIMwetdufJl5lnRM8UbeZ9BzEJW/X524mVI+yUoX/q8KA7HK0+XXlrZEzrLwWS8Vyr9AMD5lwx1L3YPIlx0drKmBgPpteQZhl3KEccylSUA5fGl4vB+ZB4YKT5YHmCCNbEt444BHW6ir3a1D79y8iixTZjItZxS/Iy2dZ3ZoJsUh4T/bqYJ9YtEtUI/20IFE2ZCSSHdzfSSzlZn61jWEXFLyIaFTEjAA2MzXr9bS3SZ5hudon4M7OeYM2wl93eRqjwxK3eWNHe71YkXFhPlWXqQb2fAqEz3STUXXL1sF7BonyBBwmBgRkSqqjOvjww2zKWEF9Qa7yyAXxCoGyPZz4QMjpszGtV82KW5nmI2yQds0oOtZwH4Hd6IlxmD/U/EQ1W5qyqVxKUxMral8RI4wCtR8LD97mOxWDjGGPe78RVHmHWpLh+MUs1MJGeH8ZybC0ch0gyfkS2yb7qVLsz4ES8M51COFUz0M9PxmAnop065cSZvEzoyQKdIIc6U9xBXmpBoRSM7V6szRKpxybYt7QmwjCUEcGmC/HOJGBU+JOj5LZVpEorGpitVsCtp9sQJilTAsWVC2sMgkruQc7EdpRGIPB223aV3QLKR9yh6tcSn9DfboZWOKgxcU10sjrtr4VBSlhnG50D/y63V+K4BkoAUGPsGka0etJaAYSZ4f50XleOVvo2cer1Z+S9zOq/R25j3tEzSyDxpJs050sQgzfAd8/9rHKyezE06U979JulIb2AoVJod70sFk+O05AiKIHS7ErCvqeZcI9Z4Aw0sIfQpwzj3VkD1lQFtYXlZWvTEX11R9lNlG/qTwtvQD0Iz26oiMwFavXllVzuvokd+UiUAgFqQYD8/PQ8Ky7rZhBM1+mIrqAQpY/yS3r1lglTm8nt0NxTFB6TlpdsXw2O/dVodXCO3/ig615UhKFk3K8/ViS4Yxn+9DV7Nbwyk7q85KCvasOrkxvAbw8C5/EvoyStJNF/H+yhv/nGpZ1GpLpztUWHtJ0uV24WjofsT5ICQALPrEtaexy+cuJjXqY1m5fqeQxSpswHeD3Zb8wTg5csTtii0NaFHTS3IW3k/ZZq7Ou8pHu5fUBe+7epq5P5lloo5OufiA46KNTlL4pZkQtB6k/7sQAOoxnuMXMsouG011YEioWRveuy4tkEbGKb84RVYlalZpSuchyNntt5UJZDr5Xk3AxGdton9V8VxmchM3iSV3Si9fo1RGuyMGuvSpJSS9OIwoFeoIdqdhYnNms/pb0zB1O4qJCIUtT9iodI2SnwYivFW35lBkgQI4Set7ULsec81KuRqT0qfuFb5or94trEKHby9ZvXHr9VFixRGHQHnIXyIxczw3hdySe+wJWbvvS6HvOzS5W/XrkkH0IVqGwnxG3MEmXfqpzQ5d9E7KQ7Xja60ZIk5GaNL5TyyzD4o9UHVse+2fUMN/pVfd1xsZImJRhKM6UehxIsqrW11v8pK5I47Pi7r+sl52ht5s5TfrwsWFuAscscRayMqVCOre5FDnz5su6YALZruY3Xp3are0ECAdupbDl/qHnor/U1i2KU4G1s1iI8BxBy9ziwMk7XKBb/E2BQ/L0VuqWdTjg1dOy0giZjOmDNxqS43lfDdQinOEdsrhAM8GWoBBK7UXXvVt2at73H6BLfkFp3Hf+LKK0vBg+bgkgagSmS+ioEO/HJLVywrrgoLBt8MN9u17K/uv4yVcp5T8gH5Nt2wKg7Lud/L7cGhQvGqU6/nMbG/fgs28/vc10zzRunP4qkU5Nr/y2Tl3Y0XJ7qNxI8gLIDKShPMjrUGRZOV1OV0i4+uXEZ/8Nd+i+krBguzSpqYk4cbSeGEtEaz1aKmRmn4zxObcIa+oebv6zZAHaoiodP11S1MVnJWm5rXB2N2YPkJt8q9kBwy4cJQrpkKTKIfJP9Jgna+w0cDAFrRLNQPZBuewL90wqZBLW9JhwCrXHr47T8FHHJyjG77Yfx8onAkSmathv+UgXgDxb9iZuIjJW0eG0zpkhWUSjcn6KOThne1cysGiU9yTcP/Rcw28+oQ4aUNefljrV9dxMNQeC/5z0cXtj2AIxqZEKCQ7gzOYz82eJotaVXMceTRtsXh55QNPDFlJs0HCmxKi2S+z1kH77Eh6YMoOwWqKH1swSuWY69LQhlt36i4YUL9fP3io1BTNnCZ10CgVHJ05SMtR5ZVinGioPVmqa+T4ohAsSapY1gxYDHlzCz80rjTyOOcL8f1zCwr4KVo+LpMFaOvbQ6fEJCIEnMFm0WbPPDphCePGSlyEMhOTgvbEiHXKwkfonk+PTrOe9LcpoxBFhGI9QhtnnOpe8gplfhB1Tu1wWgtgxHpTMF9CtNA+nwUkETG1VZGlvRtRlmKhbB1BVTvvu82Uf4BkuAw2BN47Il0M6B70VNBE9b+aaqV2eokVG3zA0NTVJayjikCAbrbxcSwMfuxboAbXP16ooVoIwX50Fzvo2WCCCDDG/t/E5Pk9QIha/IlkPc/PQDZsCOULjjsFwdvKS0d9fjYUR5lF5fdNuZBNL7qNYilT1A3fN2fRIPF3fZJr/2QgQhWvf27pO2jLfaJei0IuSwKyPHMBI3wJiajQjvr2zkT3oLhmxVods/DdBtzNh3QvlWb/Y0vI2u8MpnFuajpoVy6FkVKW5mZ6aRZkCoVAmhIYsai/EHnw5DCJSBj0c1Yu4Qmg9WcBpju0WreB+AnItmJ4BWOS3ih0VH0kWjxxsYIisKrLKHpxJ4w/1wQYY9E0CPdZ/Bhv8CSkksyuvHtp5Jac6IXYEPmM5d5N/QL+R/jxUiRB826UWVcuJ29SccL3Cws1khw9kDeW5ndITEVEv5BS79rTAhYrV1tMjqUUXo1QL7deqFBjLX9X3r01/C4j/BANf5u/cA9eWzN+tWozwQeqO7Xw034Bf8UVHY8gjItd7zVLCmaaLOBSGVvZ0mFHr0aIuh42aLaqak5L5EFcBpsJVHPpdJRrW0SnvHGymz76yMtPg1p1wecJPHDRgdvOx+2+rEICvmRCZylLeWfLLzenWvipfBEF1UT5dOwKBMtEaHyMoy+Lu0qeWmM5tl8z36f/j4VTxlKuKUrsEru2+yWQwbZK3ReCPJEUC+wcXEnT3q8MJkCDCw+1vD3VfzdBc1rdqF5hcRR0ccZzUtoS7fnQZqYRpt5tRAReGPxaRvtydNupXTxMGmlyqTyTrotDIU7ZSyNVadiVuVaKWg8Ak0QJ4kMABzwl6/jdnCwT8QkeK8yYUBtnoXq/r/QeoYuHTCdArKL9BBJCqfXYve/h5clIrhUSJZ6eufm6AxBfhXDLob9TDwntRDjcMF0PFhYwwM9mBDA8XdzELqYeHTaUJTOFYMj2KslKHkzLNVTOatrSHLdkS7JUTijxieOSkAQALlez3Xll0rMCsSfYIQyzjktw2MtvI8MIVPPdiTR7IyZiJRD7g1Mk+jWHPGUtt8uRDQAYMPfflXAR+3oHGzAtp5afzpjroYlSiVt9caVKEI0EKJ3tVT/omXXpFtlxvlXFbahF8+rw+XdpI70RT6g5vkXwzGx17sELjXvD01wVlUKSZImO/tCxt7NgW0cBss3/RVetIjxjrd7L0zDS4816r2UnfP6+ZOgIBVAcqDLM1+NJeNBB8xM2WJ+NF9RBYdvrJhOz3ZXTP4vAX2B55vV1VydzyfD8xV3S2vGhB/yZTQDsOAwVoHkYP3G0w1vzcfSmk4eQvT1aKvj8bDnwS92Ez4jQ8m1X1ccM3Lu2ERmEb7dRXzN8RWAoA1ty2pds+vbv7jh48hcp2JoBEOdGxsJfWLWo+AnhhyRcI7lYmJFPsESfRe6ZPcs5lIAFqGTisjX440TH2WKIMWf7L+J8u5SzVOMuhDab5Dc9q8zsqnx3fIzn467hnkgRb7FD+hpG+HO/iUPmAbfVJij4TtMZMi/pH1oYyy/y3h29q00rZEtN8hK215X0l02a4d5RYTojJWYcw5VVyHGN47RcvW9VxA2Bra7EnGqHRehoJzIwyjBEHXzoC7FS0gaw1NQkr2wNsAztEekz5h+pM1qMwAnfAHZIGizHoYFKxVjSWX+BMWQ/TbxEyjy4gYismtJm39nap1yBB4jzyB+zmngmrzGE/jkdyQpfTamYSY1CsBdObzJDUWxg4NY98am13rVDtbZfgc8fsshSdYwylxYc4HsF3QwJX9hQVUIIuSLpr3FypnE2gbOI0AGTrScwp1c0eXH/+5R8ZJcMImZp06X4t/BURbMDluF/c8DbMkJSilj5gRhGpMjGl8teuklpkk6rhQMlh0SOqDlCespHM6d0MiTPLfYXqeYXqLu2r2PUNnBxiRXLQlfH9qDsJt+DMR49nXVErpSdBjCWSWFJJXd4WWYlGuGB/+uOk78tMrrZH4GbezlUPWAIp/qnALDGhNPdPynSPP6wP/FcnbfskPqiPWLxb97eOfAFYjnrOFcb1kc58MQnwOaHMH4ycRFYMn5Vly3sYsxcct0V5AOCgJI6VuzyaXr8eVHe/oRt1+ypkzKTAs3JeU34BSoHe1Yyn+7BqlgPK6HiUFY8mQh1uqAkYrA4mjiybBJcxgP/uqzIrAewHilfE/r+JDbg5m1rIWmtLa8kc/vpBTxOUbPr3Cv8fbXMJZNeTnNVFpyni0wO3t3VviGF8WUu9R1zLIpqVdMQ0u/2WnCikUQtKQdnTlA7CujSldYw8DRIUmgWX/Tw0gTh9OaLjCDk3zmnN6T5egJqS6e4P+bFc+cu0NguddSY96zHTVNuQblGX8E2FHaheF9oB7uBgjvH0/VAGrLYIESSbdD+jQ3CwGsun3/Us2nfBVTpJqfb2IoOkmf0jJh//6eyCSgt8vpZNv1WeIlHYZgT1b6HnujOrDcMPe9UPM/z7oEu01M0OGZTeGKzyGo6tcPTN9Yk9yQwEgMKUe02zT4UYy0GTqfWOXt9PqYH88Z/Hp1eP84jXpM8oMd93v5L6Na3xilXgc96HCSzwa6Q1Q8inyE6MGqth7Ppa7D/3AQhmZipQ59frvzB6WSoyk1FIAHpWMDdXbOFyFSBxJbrM0Jgf0qSXuxRNoFKXNvgSZaPFI4YesQWruJk91Kxv2cm3y21D2StJcQfxwMAKzPQgefzebytcFZGR0gA5ICXvzud3U5LEy1y3+ZM/e5n4EJjugxn8JaTiTen+2ZNY/iS9VUfJxkWq8gzEysHRrKTfYXOp2Ox2Owc5ge1HDcfUsQC1OvwhBxtz08jD9FpxaQxlVapDeXm1OVUqNm9/74j7ameTfhuKizqJtnalCssb1qKCJPJHrWFmvSvuqJVNaym+AsHeHM2Elb2+XHZESfztLQwwMeWzxcuaQrQ+YiJ9W1wC0lP14yMyWSAw4aNRQ1k8Irx7KjXGUpJB7DsglwFp7h+j20g2dnkQCVnCxPWj5By9UUVaZk9jjCmJYwS3y0k7fcNTyDjY6yQhKfMbJNrQn1CAEZ1tJl1cRKDF18xjppLmTY8XieyDufyIAi3N0e9e+vebO+zMAfvdEfAKUfoM/76wUfPYmt/cpj5GOoUglFxTDSEnkqj0E5JB8DcCI6lCCSToF4FcgnSXuhpL5IgG//u1cYhtwvmlxz52BhqCBAvMPGoLWRi7FUHOlleNiYZbMHV5OREaq3oG2IRpq+8cHqFC1Gli1nQPt/1Kc9mFdOeoBS9bjeBMWuC8vquUDAVUjCHBfBCqd22zoxHBBT5EVIZHg9k4A7sw/uiASgUTTmkfO/nqMjz2lLHitlnD5kwWoVyWcsY+KOYy6agS/DYkqigExp0e0UgPl3J8Fp4+AoQVaekChfdqnKTQo0GKnrJLF8OWMCsKUuTFjLXJbor/bA5jEZgAoYCbibr+2yNHeIw5+BjUktYBRtG2AQ1y7nDdrm8l4UuFHKazAmrpwKNAs7xMIOQ+QW2KL6P0i0ymAF1aC5TltRDq9I4+PuIEpKW8Q00oyif9VXfVVGXA+hwMLT/MOwOCL3auORLcaD7JKrQaEouvHL2flPZuQjRGb3kupdrjAxcgsyfmZlYLXCS7M+4JuHWQmCdsPOsr6rXhigLbpADP4QrpyEuyKnai5AgghLbLJKRikyioQmBT2cNMm9J7v+1wPfpFBWEmRU5/WdwPMsE/WOVpzGlxZyWNPIY0wgowPcUcnvau/P+pEpeUsw+lqQRbJ6ErlP8f8qrfPp5qUjnnMNvL1aUlYZ2eHL0SvvrX/iiG6ZkpRb8d/KQRLIgLu9fMJaKa7J7yiyopdWFh4EZSC4Oh1Mi4blRaRxu9EM4zQjMTa3Xs6nbIdR+PPy6tJIQVB7PKHvgobRrX5bkHraulobnqSzPZHO+5/mZwn3PLDqP0+1h/sNTErv9Q/xuyr/64bfmu8jTMS8GAa4s3TuwzbjsZ+JChsiDqEmXO+GpKbuf9MyO9WSsz8yIw7t/ZLhCgVEo75Bd2y3/7nfJ6wTxkbnMaLFcArwncAUP2xuSUyn6T6K6asXcm7i5U8eEw2lyxl33S0p9yfLUvor68ENCIze+RXPbFFD4XqIzdRwbRPe0r3RtjhbgaadmgsNSgyH7CshQaJ+dyiHkFvZ/ef9xLbxe9dzOL9li/jREr3DFRmP8uTTNL5apZJ2AJKjAEzaPAlWQWQYkqgEHTHQUE2tlzVuWCDLbTWhGvsFHw9ht2oRo4z4FaInU3zZLFuLosFQRF/JL7mcNFv7zF5StfWQBe3xc2P+ejbFmsYPTZ5nxI3DugakHT1hS9kZaoYSC1nGKhxWQ1ICim9gitkRiejpS+vhUi+nFz1eyBvXZul3YEZTVSWyL2A7gBtz3fsE6Yn3uV9VEfs2AUey4DR0RU+K6mmZWWXoC22ghF/KDHWRJ0XsLxlIAQiMSNW4=";
+const RAW=__DATA__;
 
 async function decryptPayload(b64, pass){
  const bin=Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
@@ -377,7 +510,7 @@ renderKids('');
 document.getElementById('q').addEventListener('input',e=>renderKids(e.target.value));
 
 // дни рождения
-const TODAY=new Date(2026,8-1,7);
+const TODAY=new Date(__YEAR__,__MONTH__-1,__DAY__);
 const bd=D.kids.filter(k=>k.bday).map(k=>{
  const [d,m]=k.bday.split('.').map(Number);
  let y=TODAY.getFullYear(), next=new Date(y,m-1,d);
@@ -516,3 +649,15 @@ document.addEventListener('click',e=>{
  inp.focus();
 })();
 </script></body></html>
+"""
+PAGE = PAGE.replace("\u2014", "-").replace("\u2013", "-")
+PAYLOAD = ("ENC:" + encrypt_payload(DATA, PASSWORD)) if PASSWORD else DATA
+open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLOAD, ensure_ascii=False) if PASSWORD else DATA)
+                                        .replace("__ASOF__", AS_OF.strftime("%d.%m.%Y"))
+                                        .replace("__TREAS__", "Анна Е." if MASK else "Анна Елисеева")
+                                        .replace("__SEARCHPH__", "Найти по имени…" if MASK else "Найти по фамилии…")
+                                        .replace("__STAMP__", STAMP)
+                                        .replace("__YEAR__", str(AS_OF.year))
+                                        .replace("__MONTH__", str(AS_OF.month))
+                                        .replace("__DAY__", str(AS_OF.day)))
+print("report ok ·", len(sbory), "сборов ·", len(kids), "детей")
