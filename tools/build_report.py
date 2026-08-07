@@ -3,14 +3,39 @@
 import datetime, json
 from openpyxl import load_workbook
 
-import os as _os
-SRC = _os.environ.get("SRC", "/home/claude/Касса_2В_2026-2027.xlsx")
-OUT = _os.environ.get("OUT", "/home/claude/index.html")
-AS_OF = datetime.date(2026, 8, 7)
 import os
-STAMP = os.environ.get("STAMP", "-")
+SRC = os.environ.get("SRC", "/home/claude/Касса_2В_2026-2027.xlsx")
+OUT = os.environ.get("OUT", "/home/claude/index.html")
 MASK = os.environ.get("MASK") == "1"
 PASSWORD = os.environ.get("PASSWORD", "")
+ALLOW_UNSAFE = os.environ.get("ALLOW_UNSAFE") == "1"
+
+# Предохранители. Публичная версия обязана быть зашифрованной и обезличенной,
+# поэтому пустой PASSWORD и MASK != 1 — это остановка сборки, а не предупреждение.
+# ALLOW_UNSAFE=1 снимает обе проверки разом: только для именной незашифрованной
+# версии, которая остаётся в папке Свод на Google Диске и в репозиторий не идёт.
+if not ALLOW_UNSAFE:
+    if not PASSWORD:
+        raise SystemExit(
+            "СБОРКА ОСТАНОВЛЕНА: PASSWORD пуст.\n"
+            "Страница собралась бы в открытом виде — payload лежал бы в HTML как есть,\n"
+            "и все цифры прочитал бы любой, кто открыл ссылку или скачал файл.\n"
+            "Задайте PASSWORD='кодовое-слово' либо, если версия намеренно не для\n"
+            "публикации, соберите с ALLOW_UNSAFE=1.")
+    if not MASK:
+        raise SystemExit(
+            "СБОРКА ОСТАНОВЛЕНА: MASK не равен 1.\n"
+            "В файл попали бы полные фамилии детей и казначея вместо «Артур Е.».\n"
+            "Задайте MASK=1 либо, если версия намеренно не для публикации,\n"
+            "соберите с ALLOW_UNSAFE=1.")
+
+_as_of = os.environ.get("AS_OF", "").strip()
+try:
+    AS_OF = datetime.date.fromisoformat(_as_of) if _as_of else datetime.date.today()
+except ValueError:
+    raise SystemExit(f"AS_OF={_as_of!r}: ожидается дата в формате ГГГГ-ММ-ДД, например 2026-08-07.")
+
+STAMP = os.environ.get("STAMP") or datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
 
 def encrypt_payload(plaintext: str, password: str) -> str:
