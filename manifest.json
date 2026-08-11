@@ -1,0 +1,21 @@
+{
+  "name": "Касса класса 2В",
+  "short_name": "Касса 2В",
+  "lang": "ru",
+  "display": "standalone",
+  "start_url": "./",
+  "theme_color": "#2f5496",
+  "background_color": "#2f5496",
+  "icons": [
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

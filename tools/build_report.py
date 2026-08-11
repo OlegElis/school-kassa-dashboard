@@ -209,6 +209,8 @@ PAGE = r"""<!DOCTYPE html>
      в корень домена, где ничего нет. -->
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-title" content="Касса 2В">
 <meta name="theme-color" content="#2f5496">
 <style>
  :root{--ink:#16181d;--dim:#6b7280;--line:#e6e8ec;--bg:#fff;--accent:#2f5496;--good:#0f766e;
