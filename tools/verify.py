@@ -96,16 +96,22 @@ def main():
 
     data = decrypt(m.group(1), password, iters)
     kids, sbory, spends, t = data["kids"], data["sbory"], data["spends"], data["t"]
+    # Внешние плательщики (ext) лежат в том же списке, но детьми класса не являются:
+    # расходы делятся не на них, и в счёт детей они не идут.
+    own = [k for k in kids if not k.get("ext")]
+    ext = [k for k in kids if k.get("ext")]
 
     print("\nСодержимое")
-    print(f"        детей: {len(kids)}")
+    print(f"        детей: {len(own)}")
+    if ext:
+        print(f"        внешних плательщиков: {len(ext)}")
     print(f"        сборов: {len(sbory)}")
     print(f"        расходов: {len(spends)}")
     print(f"        собрано: {rub(t['collected'])} ₽")
     print(f"        потрачено: {rub(t['spent'])} ₽")
     print(f"        остаток: {rub(t['rest'])} ₽")
-    if kids:
-        print(f"        доля расходов: {rub(t['spent'] / len(kids))} ₽ на ребёнка")
+    if own:
+        print(f"        доля расходов: {rub(t['spent'] / len(own))} ₽ на ребёнка")
 
     print("\nАрифметика")
     check(abs(t["collected"] - t["spent"] - t["rest"]) < 0.005,
@@ -115,15 +121,19 @@ def main():
     check(abs(total - t["spent"]) < 0.005,
           f"сумма {len(spends)} расходов сходится с «потрачено»",
           f"расходы дают {rub(total)}, а в итогах {rub(t['spent'])}")
-    if kids:
-        share = t["spent"] / len(kids)
-        bad = [k for k in kids if abs(k.get("share", 0) - share) > 0.005]
+    if own:
+        share = t["spent"] / len(own)
+        bad = [k for k in own if abs(k.get("share", 0) - share) > 0.005]
         check(not bad, f"доля расходов у всех детей одна ({rub(share)} ₽)",
               f"доля расходов разъехалась у {len(bad)} детей")
 
     print("\nПерсональные данные")
-    names = [k["name"] for k in kids]
-    names += [p["name"] for s in sbory for p in s.get("parts", [])]
+    # Имена внешних плательщиков - не фамилии детей («Соседи»), под шаблон маски
+    # они не подходят и проверяются не здесь. Собранное без MASK=1 всё равно
+    # ловится: у детей фамилии остались бы полными.
+    ext_names = {k["name"] for k in ext}
+    names = [k["name"] for k in own]
+    names += [p["name"] for s in sbory for p in s.get("parts", []) if p["name"] not in ext_names]
     leaked = sorted({n for n in names if not MASKED.match(n)})
     check(not leaked, f"все имена в payload замаскированы ({len(names)} шт.)",
           f"незамаскированных имён: {len(leaked)} - собрано без MASK=1")

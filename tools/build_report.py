@@ -82,7 +82,11 @@ totals = {"collected": sv["C6"].value or 0, "spent": sv["C7"].value or 0,
 
 
 def dt(x):
-    return x.strftime("%d.%m.%Y") if hasattr(x, "strftime") else ""
+    """Дата из ячейки. Проверка именно на дату, а не на наличие strftime: после
+    пересчёта формул LibreOffice пустой результат MINIFS приходит из ячейки как
+    datetime.time(0, 0), у которого strftime тоже есть, и пустой срок превращался
+    в «01.01.1900» и уезжал в календарь событий."""
+    return x.strftime("%d.%m.%Y") if isinstance(x, (datetime.datetime, datetime.date)) else ""
 
 
 def num(x):
@@ -114,9 +118,14 @@ for r in range(S_FIRST, S_LAST + 1):
     n = uch.cell(row=r, column=3).value
     if not n:
         continue
+    # Колонка L - комментарий. «Не ученик…» помечает внешнего плательщика (соседний
+    # класс, делящий кабинет): его деньги лежат в кассе, но ребёнком класса он не
+    # считается - ни в чипах, ни в знаменателе доли расходов, ни в основной таблице.
+    ext = str(uch.cell(row=r, column=12).value or "").strip().lower().startswith("не ученик")
     # ord - позиция в журнале, то есть порядок по фамилии. Наружу уходит только число:
     # оно служит скрытым ключом сортировки и вторичным ключом при равных суммах.
     kids.append({"row": r, "col": MC + (r - S_FIRST), "ord": len(kids) + 1, "raw": n, "name": pub(n),
+                 "ext": ext,
                  "prev": num(uch.cell(row=r, column=4).value),
                  "paid": num(uch.cell(row=r, column=5).value),
                  "debtY": num(uch.cell(row=r, column=7).value),
@@ -187,8 +196,9 @@ for s in sbory:
         for step in s["sched"]:
             EVENTS.append({"date": step["date"], "kind": "due", "code": s["code"],
                            "title": f'Внести {money(step["amount"])} \u20bd - {s["title"]}'})
-    elif s["due"]:
-        # запасной путь: сбора нет на листе «График»
+    elif s["due"] and s["first"]:
+        # запасной путь: сбора нет на листе «График». Сбор без объявленной суммы
+        # срока не имеет - иначе в календаре появляется «Внести 0 ₽».
         EVENTS.append({"date": s["due"], "kind": "due", "code": s["code"],
                        "title": f'Внести {money(s["first"])} \u20bd - {s["title"]}'})
     if s["event"]:
@@ -533,6 +543,7 @@ PAGE = r"""<!DOCTYPE html>
   <input class="search" id="q" type="search" placeholder="__SEARCHPH__" autocomplete="off">
   <div class="chips" id="chips"></div>
   <div id="kidlist"></div>
+  <div id="kidext"></div>
   <div class="hint" id="kidhint"></div>
   <div class="expl" id="ex-kids"></div>
  </div>
@@ -566,6 +577,9 @@ const rub=n=>{n=Math.round((n||0)*100)/100;const s=Number.isInteger(n)?n.toLocal
   n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
   return s.replace(/ /g,' ')+' ₽';};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Склонение по числу: форма для 1, для 2-4 и для 5 и больше, с исключением на 11-14.
+const plural=(n,one,few,many)=>{const a=n%10,b=n%100;
+ return b>=11&&b<=14?many:(a===1?one:(a>=2&&a<=4?few:many));};
 const T=D.t;
 // Дата отчёта: точка отсчёта и для графика платежей, и для календаря ниже.
 const TODAY=new Date(__YEAR__,__MONTH__-1,__DAY__);
@@ -616,11 +630,14 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
    const cls=i===nextI?'now':(parseD(x.date)<TODAY?'past':'');
    return `<span class="st ${cls}"><b>${esc(x.date.slice(0,5))}</b> - ${rub(x.amount)}</span>`;
   }).join('')}</div>`:'';
- const meta=[`${s.n} участников`];
+ const meta=[`${s.n} ${plural(s.n,'участник','участника','участников')}`];
  if(s.event)meta.push(`событие ${s.event.slice(0,5)}`);
  if(!sc.length){
   if(s.first)meta.push(`по ${rub(s.first)}${s.due?' до '+s.due.slice(0,5):''}`);
   if(s.per&&s.per!==s.first)meta.push(`всего ${rub(s.per)}${s.dueFull?' до '+s.dueFull.slice(0,5):' - платежами в течение года'}`);
+  // Ни графика, ни суммы за год, ни взноса к сроку: сбор объявлен, цифры ещё нет.
+  // Прогресс-бар при пустом плане и так не рисуется.
+  if(!s.per&&!s.first)meta.push('сумма пока не объявлена');
  }
  return `<section class="card">
   <div class="card-top">${s.code?`<span class="code">${esc(s.code)}</span>`:''}
@@ -642,9 +659,14 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
  ||'<div class="empty">Сборов пока нет.</div>';}
 renderSbory();
 
+// Дети класса и внешние плательщики разведены: OWN - те, кого касаются чипы,
+// поиск, сортировка и деление расходов; EXT - чужие деньги, лежащие в той же
+// кассе (сосед по кабинету скинулся на декор). Их остаток входит в остаток
+// кассы, поэтому он показан отдельным блоком, а не спрятан.
+const OWN=D.kids.filter(k=>!k.ext), EXT=D.kids.filter(k=>k.ext);
 let KFILTER='all';
 function renderKids(f){f=(f||'').trim().toLowerCase();
- let L=D.kids.filter(k=>!f||k.name.toLowerCase().includes(f));
+ let L=OWN.filter(k=>!f||k.name.toLowerCase().includes(f));
  L=[...L].sort(cmp);
  if(KFILTER==='debt')L=L.filter(k=>k.debtN>0);
  if(KFILTER==='year')L=L.filter(k=>!k.debtN&&k.debtY>0);
@@ -701,11 +723,18 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
   :'<div class="empty">Никого не нашли.</div>';
  const h=document.getElementById('kidhint');
  if(h)h.innerHTML=`Остаток - сколько денег ребёнка ещё не потрачено: внесено минус своя доля расходов
-  (сейчас ${rub(D.t.spent)} ÷ ${D.kids.length} = ${rub(D.t.spent/D.kids.length)} с человека).
+  (сейчас ${rub(D.t.spent)} ÷ ${OWN.length} = ${rub(D.t.spent/OWN.length)} с человека).
   <b>Минус означает, что за ребёнка уже потрачено больше, чем он внёс.</b>`;}
 
-const cnt={all:D.kids.length,debt:D.kids.filter(k=>k.debtN>0).length,
- year:D.kids.filter(k=>!k.debtN&&k.debtY>0).length,ok:D.kids.filter(k=>!k.debtN&&!k.debtY).length};
+// Блок внешних плательщиков не зависит от поиска, сортировки и чипов: он собирается
+// один раз и стоит между таблицей и подписью. Без него сумма видимых остатков
+// не сходится с остатком кассы.
+document.getElementById('kidext').innerHTML=EXT.length?`<h2>Поступления не от учеников класса</h2>
+ <div class="rows"><ul class="list pad12">${EXT.map(k=>
+  `<li>${esc(k.name)}<span class="amt">${rub(k.rest)}</span></li>`).join('')}</ul></div>`:'';
+
+const cnt={all:OWN.length,debt:OWN.filter(k=>k.debtN>0).length,
+ year:OWN.filter(k=>!k.debtN&&k.debtY>0).length,ok:OWN.filter(k=>!k.debtN&&!k.debtY).length};
 // Подпись фильтра совпадает с плиткой: речь про один и тот же ненаступивший платёж
 document.getElementById('chips').innerHTML=[['all','Все'],['debt','Надо к сроку'],
  ['year','Только за год'],['ok','Рассчитались']].map(([k,l])=>
@@ -890,4 +919,7 @@ open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLO
                                         .replace("__YEAR__", str(AS_OF.year))
                                         .replace("__MONTH__", str(AS_OF.month))
                                         .replace("__DAY__", str(AS_OF.day)))
-print("report ok ·", len(sbory), "сборов ·", len(kids), "детей")
+_ext = sum(1 for k in kids if k["ext"])
+_pl = "внешний плательщик" if _ext % 10 == 1 and _ext % 100 != 11 else "внешних плательщиков"
+print("report ok ·", len(sbory), "сборов ·", len(kids) - _ext, "детей"
+      + (f" · {_ext} {_pl}" if _ext else ""))
