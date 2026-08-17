@@ -34,6 +34,10 @@ MASKED = re.compile(r"^\S+ [А-ЯЁA-Z]\.$")
 # не годится - так называется вкладка (data-tab="spends"), проверка ловила бы себя.
 PLAIN_MARKERS = ('"debtY"', '"dueYear"', '"bday"', '"proof"', '"collected"', '"promises"')
 
+# Служебные пометки казначея. В журнале они законны - это «здесь ещё не разобрались»,
+# - но на страницу идти не должны: родитель читает их как часть отчёта.
+MARKS = ("[?]", "уточнить", "уточняется", "TODO", "??")
+
 ok = True
 
 
@@ -62,6 +66,24 @@ def rub(n):
     """Число в том же виде, в каком его видит родитель: 9 810,5."""
     s = f"{round(n, 2):,.2f}".replace(",", " ").replace(".", ",")
     return s[:-3] if s.endswith(",00") else s
+
+
+def find_marks(node, path=""):
+    """Обходит payload и возвращает [(путь, пометки, текст)] для каждого поля
+    со служебной пометкой. Путь ведёт до конкретной записи и поля - иначе
+    в журнале на пару сотен строк непонятно, где именно править."""
+    if isinstance(node, str):
+        hit = [m for m in MARKS if m in node]
+        return [(path, hit, node)] if hit else []
+    if isinstance(node, list):
+        return [h for i, v in enumerate(node) for h in find_marks(v, f"{path}[{i}]")]
+    if isinstance(node, dict):
+        # Запись подписываем её собственным названием: «spends[3] «Хозтовары в класс»»
+        # читается, а «spends[3]» пришлось бы искать глазами.
+        label = next((str(node[k]) for k in ("what", "title", "sbor", "name") if node.get(k)), "")
+        here = f"{path} «{label}»" if label and path else path
+        return [h for k, v in node.items() for h in find_marks(v, f"{here}.{k}" if here else k)]
+    return []
 
 
 def decrypt(blob_b64, password, iters):
@@ -168,6 +190,14 @@ def main():
     found = [mk for mk in PLAIN_MARKERS if mk in html]
     check(not found, "открытых данных payload в файле нет",
           f"payload лежит в открытом виде: {', '.join(found)}")
+
+    print("\nСлужебные пометки")
+    marks = find_marks(data)
+    check(not marks, f"на странице нет пометок «{'», «'.join(MARKS)}»",
+          f"пометки увидят родители - {len(marks)} шт., чинить в журнале:")
+    for path, hit, text in marks:
+        print(f"          {path} — {', '.join(hit)}")
+        print(f"            {text.strip()[:150]}")
 
     print("\n" + ("verify ok" if ok else "verify FAILED") + "\n")
     return 0 if ok else 1

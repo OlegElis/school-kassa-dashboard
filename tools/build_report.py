@@ -224,10 +224,15 @@ for k in kids:
                  for vr in range(6, 86)
                  if vz.cell(row=vr, column=3).value == k["raw"] and vz.cell(row=vr, column=5).value]
 
+# Колонка J - комментарий к расходу: расшифровка чека, «из чего сложилась сумма».
+# Родителям он отвечает на «куда ушли деньги» лучше категории, поэтому идёт на
+# страницу. Комментарий к сбору (лист «Сборы», колонка Q) - заметка казначея
+# и на страницу не выводится.
 all_spends = [{"date": dt(rs.cell(row=e, column=2).value), "sbor": rs.cell(row=e, column=3).value or "не привязан",
                "what": rs.cell(row=e, column=4).value or "", "cat": rs.cell(row=e, column=5).value or "без направления",
                "amount": num(rs.cell(row=e, column=6).value),
-               "proof": str(rs.cell(row=e, column=9).value or "со слов").lower()}
+               "proof": str(rs.cell(row=e, column=9).value or "со слов").lower(),
+               "comment": rs.cell(row=e, column=10).value or ""}
               for e in range(6, 66) if rs.cell(row=e, column=6).value]
 
 TEACHER = {"name": "Учитель класса", "date": "30.08", "role": "учитель"}
@@ -871,6 +876,7 @@ const EXPL={
   ['Сортировка','Нажмите на заголовок колонки. Повторное нажатие меняет направление.'],
   ['Нашли ошибку','Если платежа нет или сумма не совпадает, напишите Ане, поправим и перевыпустим отчёт.']],
  spends:[['Обещано, но не оплачено','Услуга заказана или вещь обещана, а деньги ещё лежат на карте. В расходы такие строки не попадают и в долю на ребёнка не входят - доля считается только по тому, что уже потрачено. Когда оплата пройдёт, строка переедет в список трат. «Свободный остаток» в шапке - это остаток кассы за вычетом обещанного.'],
+  ['Что именно купили','Если у расхода есть расшифровка - что вошло в чек, - строка раскрывается нажатием. Строки без расшифровки не раскрываются.'],
   ['Подтверждения','Бумажные чеки по классу не собираются. У каждого расхода указано, чем он подтверждён: скрин оплаты, чек или только со слов.'],
   ['Привязка к сбору','Каждый расход относится к конкретному сбору и делится только между его участниками.'],
   ['Направление','Категория расхода: праздник, подарки, канцтовары и так далее. По ней видно, на что уходят деньги класса.'],
@@ -909,14 +915,18 @@ function renderSpends(){
   g.items.push(e); g.sum+=e.amount;});
  const chips=[['date','По датам'],['cat','По направлениям'],['sbor','По сборам']].map(([k,l])=>
   `<button class="chip" data-sg="${k}" aria-pressed="${k===SGROUP}">${l}</button>`).join('');
+ // Расход с комментарием раскрывается нажатием - тем же .row/.row-b, что и
+ // обязательство. Без комментария тела нет, и строка не раскрывается.
  el.innerHTML=promHtml+`<div class="chips" id="sgroup">${chips}</div>
   ${gs.map(g=>`<div class="mgroup">
    <div class="mhead">${esc(g.k)}<span>${rub(g.sum)}</span></div>
-   <div class="rows"><ul class="list pad12">${g.items.map(e=>`<li>
+   <div class="rows">${g.items.map(e=>`<div class="row${e.comment?'':' nc'}"><div class="row-h">
      ${SGROUP!=='date'?`<span class="tag">${esc(e.date)}</span>`:''}
-     <span>${esc(e.what)}${SGROUP!=='cat'?`<br><span class="sub">${esc(e.cat)}</span>`:''}</span>
-     <span class="amt">${rub(e.amount)}</span><span class="tag">${esc(e.proof)}</span></li>`).join('')}
-   </ul></div></div>`).join('')}`;
+     <span class="pm">${esc(e.what)}${SGROUP!=='cat'?`<span class="sub">${esc(e.cat)}</span>`:''}</span>
+     <span class="amt">${rub(e.amount)}</span><span class="tag">${esc(e.proof)}</span>
+     <span class="chev"${e.comment?'':' style="visibility:hidden"'}>▾</span></div>
+    ${e.comment?`<div class="row-b"><div class="sum">${esc(e.comment)}</div></div>`:''}</div>`).join('')}
+   </div></div>`).join('')}`;
  document.getElementById('sgroup').addEventListener('click',ev=>{
   const c=ev.target.closest('.chip'); if(!c)return; SGROUP=c.dataset.sg; renderSpends();});
 }
