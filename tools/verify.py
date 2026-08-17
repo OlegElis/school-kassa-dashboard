@@ -32,7 +32,7 @@ MASKED = re.compile(r"^\S+ [А-ЯЁA-Z]\.$")
 # Ключи payload, которые в файле обязаны быть только внутри шифротекста.
 # Взяты те, что не встречаются в вёрстке и скриптах страницы: «"spends"» сюда
 # не годится - так называется вкладка (data-tab="spends"), проверка ловила бы себя.
-PLAIN_MARKERS = ('"debtY"', '"dueYear"', '"bday"', '"proof"', '"collected"')
+PLAIN_MARKERS = ('"debtY"', '"dueYear"', '"bday"', '"proof"', '"collected"', '"promises"')
 
 ok = True
 
@@ -96,6 +96,9 @@ def main():
 
     data = decrypt(m.group(1), password, iters)
     kids, sbory, spends, t = data["kids"], data["sbory"], data["spends"], data["t"]
+    # Обязательства лежат отдельным ключом и в spends не подмешиваются: иначе
+    # «потрачено» и доля на ребёнка выросли бы на ещё не ушедшие с карты деньги.
+    promises = data.get("promises", [])
     # Внешние плательщики (ext) лежат в том же списке, но детьми класса не являются:
     # расходы делятся не на них, и в счёт детей они не идут.
     own = [k for k in kids if not k.get("ext")]
@@ -107,9 +110,14 @@ def main():
         print(f"        внешних плательщиков: {len(ext)}")
     print(f"        сборов: {len(sbory)}")
     print(f"        расходов: {len(spends)}")
+    if promises:
+        print(f"        обязательств: {len(promises)}")
     print(f"        собрано: {rub(t['collected'])} ₽")
     print(f"        потрачено: {rub(t['spent'])} ₽")
     print(f"        остаток: {rub(t['rest'])} ₽")
+    if t.get("promised"):
+        print(f"        обещано: {rub(t['promised'])} ₽")
+        print(f"        свободный остаток: {rub(t.get('free', 0))} ₽")
     if own:
         print(f"        доля расходов: {rub(t['spent'] / len(own))} ₽ на ребёнка")
 
@@ -121,6 +129,20 @@ def main():
     check(abs(total - t["spent"]) < 0.005,
           f"сумма {len(spends)} расходов сходится с «потрачено»",
           f"расходы дают {rub(total)}, а в итогах {rub(t['spent'])}")
+    promised, free = t.get("promised", 0), t.get("free", t["rest"])
+    if promises or promised:
+        total_prom = sum(p["amount"] for p in promises)
+        check(abs(total_prom - promised) < 0.005,
+              f"сумма {len(promises)} обязательств сходится с «обещано»",
+              f"обязательства дают {rub(total_prom)}, а в итогах {rub(promised)}")
+        check(abs(t["rest"] - promised - free) < 0.005,
+              "остаток − обещанное = свободный остаток",
+              f"{rub(t['rest'])} − {rub(promised)} ≠ {rub(free)}")
+        # Обязательство, случайно продублированное в «Расходах», ловится здесь:
+        # оно ушло бы и в «потрачено», и в долю на ребёнка.
+        dup = sorted({p["what"] for p in promises} & {s["what"] for s in spends})
+        check(not dup, "обязательства не задваиваются с расходами",
+              f"есть и в обязательствах, и в расходах: {', '.join(dup)}")
     if own:
         share = t["spent"] / len(own)
         bad = [k for k in own if abs(k.get("share", 0) - share) > 0.005]

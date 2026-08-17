@@ -76,9 +76,10 @@ sv, sb, uch, dgy, dgs, uc, vz, rs = (wb["Свод"], wb["Сборы"], wb["Уч�
                                      wb["Долги_срок"], wb["Участие"], wb["Взносы"], wb["Расходы"])
 gr = wb["График"]
 GR_FIRST, GR_LAST = 6, 45
-totals = {"collected": sv["C6"].value or 0, "spent": sv["C7"].value or 0,
-          "rest": sv["C8"].value or 0, "dueNow": sv["C9"].value or 0,
-          "dueYear": sv["C10"].value or 0}
+# Обещанное, но не оплаченное. Лист появился позже остальных, поэтому его
+# отсутствие - не ошибка: у прошлогоднего журнала его просто нет.
+ob = wb["Обязательства"] if "Обязательства" in wb.sheetnames else None
+OB_FIRST, OB_LAST = 6, 25
 
 
 def dt(x):
@@ -111,6 +112,49 @@ def schedule(title):
 def money(x):
     """«1000» -> «1 000» неразрывным пробелом, как это делает rub() на странице."""
     return f"{int(x):,}".replace(",", " ")
+
+
+_MISSING = object()
+
+
+def svod(label, default=_MISSING):
+    """Итог с листа «Свод» по подписи в колонке B, а не по номеру строки.
+    Строки на листе сдвигаются - так между «Остатком кассы» и «Ждём к сроку»
+    появились «Обещано» и «Свободный остаток», - а подписи остаются прежними.
+    Без default отсутствие строки останавливает сборку: молча подставленный
+    ноль уехал бы в шапку и выглядел бы как настоящее число."""
+    for r in range(1, sv.max_row + 1):
+        if str(sv.cell(row=r, column=2).value or "").strip() == label:
+            return num(sv.cell(row=r, column=3).value)
+    if default is _MISSING:
+        raise SystemExit(
+            f"СБОРКА ОСТАНОВЛЕНА: на листе «Свод» нет строки «{label}».\n"
+            "Итоги читаются по подписям в колонке B - проверьте, не переименована ли строка.")
+    return default
+
+
+totals = {"collected": svod("Поступило всего"), "spent": svod("Потрачено всего"),
+          "rest": svod("Остаток кассы"), "dueNow": svod("Ждём к ближайшему сроку"),
+          "dueYear": svod("Ждём за год всего"),
+          # Обязательств в старом журнале нет: тогда обещано ноль,
+          # а свободный остаток равен остатку кассы.
+          "promised": svod("Обещано, но не оплачено", 0)}
+totals["free"] = svod("Свободный остаток", totals["rest"] - totals["promised"])
+
+# Обещано, но ещё не оплачено: B срок, C сбор, D на что, E сумма, F кому, G комментарий.
+# Пустая строка опознаётся по пустой сумме - как на листах «Взносы» и «Расходы».
+promises = []
+if ob is not None:
+    for r in range(OB_FIRST, OB_LAST + 1):
+        if not ob.cell(row=r, column=5).value:
+            continue
+        promises.append({"date": dt(ob.cell(row=r, column=2).value),
+                         "sbor": ob.cell(row=r, column=3).value or "",
+                         "what": ob.cell(row=r, column=4).value or "",
+                         "amount": num(ob.cell(row=r, column=5).value),
+                         "who": ob.cell(row=r, column=6).value or "",
+                         "note": ob.cell(row=r, column=7).value or ""})
+    promises.sort(key=lambda x: x["date"].split(".")[::-1])
 
 
 kids = []
@@ -204,7 +248,8 @@ for s in sbory:
     if s["event"]:
         EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
                        "title": s["title"]})
-DATA = json.dumps({"t": totals, "teacher": TEACHER, "events": EVENTS, "sbory": sbory, "spends": all_spends,
+DATA = json.dumps({"t": totals, "teacher": TEACHER, "events": EVENTS, "sbory": sbory,
+                   "spends": all_spends, "promises": promises,
                    "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
                   ensure_ascii=False)
 
@@ -260,11 +305,17 @@ PAGE = r"""<!DOCTYPE html>
  h1{font-size:23px;margin:0 0 5px;letter-spacing:-.01em;}
  .sub{color:var(--dim);font-size:13.5px;}
  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;}
+ .tiles.c3{grid-template-columns:repeat(3,1fr);}
  .tile{background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:11px 12px;}
  .tile .lab{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;}
  .tile .val{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;}
+ .tile .tnote{font-size:11.5px;color:var(--dim);margin-top:4px;}
  .tile.rest{border-color:var(--good);} .tile.rest .val{color:var(--good);}
  .tile.owed{border-color:#e3c26b;} .tile.owed .val{color:var(--warn);}
+ /* Свободный остаток идёт отдельной строкой во всю ширину: он подводит итог по
+    плиткам выше, и только так под цифрой помещается подпись, из чего он получен. */
+ .tile.free{grid-column:1/-1;border-color:var(--accent);}
+ .tile.free .val{color:var(--accent);}
  /* nowrap: четыре вкладки при 375px переносились во вторую строку и съедали пол-экрана.
     Если подписи всё же не влезают - панель прокручивается вбок, а не растёт вверх. */
  nav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;background:var(--bg);
@@ -376,6 +427,11 @@ PAGE = r"""<!DOCTYPE html>
  .row-h .bal{flex:none;width:78px;font-variant-numeric:tabular-nums;white-space:nowrap;
              font-weight:700;text-align:right;}
  .row-h .bal.neg{color:var(--bad);}
+ /* Обязательство: в шапке строки две строчки - «на что» и «кому», поэтому это не
+    .nm с обрезкой в одну строку. Строка без комментария не раскрывается. */
+ .row-h .pm{flex:1;min-width:0;}
+ .row-h .pm .sub{display:block;}
+ .row.nc .row-h{cursor:default;}
  .row-b{display:none;padding:2px 10px 12px;} .row.open .row-b{display:block;}
  /* gap и padding совпадают с .row-h, иначе заголовки не встают над своими колонками */
  /* letter-spacing живёт на .sh, а не здесь: у контейнера он растягивал скрытый
@@ -460,7 +516,7 @@ PAGE = r"""<!DOCTYPE html>
  footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--line);color:var(--dim);
         font-size:12.5px;}
  @media(max-width:560px){
-  .tiles{grid-template-columns:1fr 1fr;}
+  .tiles,.tiles.c3{grid-template-columns:1fr 1fr;}
   /* Имя + «внёс …» + «нужно сейчас …» в одну строку при 375px не помещаются:
      разрешаем перенос, сумма остаётся прижатой вправо на второй строке. */
   ul.list li{flex-wrap:wrap;row-gap:2px;}
@@ -586,9 +642,15 @@ const TODAY=new Date(__YEAR__,__MONTH__-1,__DAY__);
 const parseD=s=>{const [d,m,y]=String(s).split('.').map(Number);return new Date(y,m-1,d);};
 const tiles=[['Собрано',T.collected,''],['Потрачено',T.spent,''],['Остаток',T.rest,'rest']];
 if(T.dueNow)tiles.push(['Надо к сроку',T.dueNow,'owed']);
-document.getElementById('tiles').innerHTML=tiles.map(([l,v,c])=>
- `<div class="tile ${c}"><div class="lab">${l}</div><div class="val">${rub(v)}</div></div>`).join('');
-if(tiles.length===3)document.getElementById('tiles').style.gridTemplateColumns='repeat(3,1fr)';
+// «Остаток» - все деньги кассы, «Свободный остаток» - то, что из них ещё никому
+// не обещано. Плитка появляется только когда обязательства есть.
+if(T.promised)tiles.push(['Свободный остаток',T.free,'free',
+ `остаток кассы минус ${rub(T.promised)} уже обещанных`]);
+document.getElementById('tiles').innerHTML=tiles.map(([l,v,c,n])=>
+ `<div class="tile ${c}"><div class="lab">${l}</div><div class="val">${rub(v)}</div>${
+   n?`<div class="tnote">${n}</div>`:''}</div>`).join('');
+// Считаем плитки верхнего ряда: широкий «Свободный остаток» в сетку колонок не входит.
+if(tiles.length-(T.promised?1:0)===3)document.getElementById('tiles').classList.add('c3');
 
 // Сортировка одна на всю страницу: и список детей, и участники внутри сбора.
 // Первый клик по колонке даёт направление из SDEF, повторный - разворачивает.
@@ -808,7 +870,8 @@ const EXPL={
   ['Считается по каждому сбору отдельно','Переплата по одному сбору не закрывает нехватку по другому. Нажмите на строку, чтобы увидеть разбивку по каждому сбору.'],
   ['Сортировка','Нажмите на заголовок колонки. Повторное нажатие меняет направление.'],
   ['Нашли ошибку','Если платежа нет или сумма не совпадает, напишите Ане, поправим и перевыпустим отчёт.']],
- spends:[['Подтверждения','Бумажные чеки по классу не собираются. У каждого расхода указано, чем он подтверждён: скрин оплаты, чек или только со слов.'],
+ spends:[['Обещано, но не оплачено','Услуга заказана или вещь обещана, а деньги ещё лежат на карте. В расходы такие строки не попадают и в долю на ребёнка не входят - доля считается только по тому, что уже потрачено. Когда оплата пройдёт, строка переедет в список трат. «Свободный остаток» в шапке - это остаток кассы за вычетом обещанного.'],
+  ['Подтверждения','Бумажные чеки по классу не собираются. У каждого расхода указано, чем он подтверждён: скрин оплаты, чек или только со слов.'],
   ['Привязка к сбору','Каждый расход относится к конкретному сбору и делится только между его участниками.'],
   ['Направление','Категория расхода: праздник, подарки, канцтовары и так далее. По ней видно, на что уходят деньги класса.'],
   ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются.']]};
@@ -817,10 +880,24 @@ for(const [k,items] of Object.entries(EXPL)){
  el.innerHTML=`<button class="btn wide" data-toggle="exp-${k}" aria-expanded="false">Как это считается<span class="chev">▾</span></button>
   <div class="panel" id="exp-${k}"><dl>${items.map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join('')}</dl></div>`;}
 
+// Обещанное, но не оплаченное: деньги ещё на карте, поэтому это не расходы и в
+// доле на ребёнка их нет. Блок стоит выше списка трат и от группировки не зависит,
+// поэтому собирается один раз. Комментарий раскрывается нажатием на строку.
+const PROM=D.promises||[];
+const promHtml=PROM.length?`<h2>Обещано, но ещё не оплачено · ${
+  rub(PROM.reduce((s,p)=>s+p.amount,0))}</h2>
+ <div class="rows">${PROM.map(p=>`<div class="row${p.note?'':' nc'}"><div class="row-h">
+   ${p.date?`<span class="tag">${esc(p.date.slice(0,5))}</span>`:''}
+   <span class="pm">${esc(p.what)}${p.who?`<span class="sub">${esc(p.who)}</span>`:''}</span>
+   <span class="bal">${rub(p.amount)}</span>
+   <span class="chev"${p.note?'':' style="visibility:hidden"'}>▾</span></div>
+  ${p.note?`<div class="row-b"><div class="sum">${esc(p.note)}</div></div>`:''}</div>`).join('')}
+ </div><h2>Уже потрачено</h2>`:'';
+
 let SGROUP='date';
 function renderSpends(){
  const el=document.getElementById('pane-spends');
- if(!D.spends.length){el.innerHTML='<div class="empty">Пока не потрачено ни рубля.</div>';return;}
+ if(!D.spends.length){el.innerHTML=promHtml+'<div class="empty">Пока не потрачено ни рубля.</div>';return;}
  const key=e=>SGROUP==='date'?e.date:(SGROUP==='cat'?e.cat:e.sbor);
  const order=[...D.spends];
  if(SGROUP==='date')order.sort((a,b)=>{
@@ -832,7 +909,7 @@ function renderSpends(){
   g.items.push(e); g.sum+=e.amount;});
  const chips=[['date','По датам'],['cat','По направлениям'],['sbor','По сборам']].map(([k,l])=>
   `<button class="chip" data-sg="${k}" aria-pressed="${k===SGROUP}">${l}</button>`).join('');
- el.innerHTML=`<div class="chips" id="sgroup">${chips}</div>
+ el.innerHTML=promHtml+`<div class="chips" id="sgroup">${chips}</div>
   ${gs.map(g=>`<div class="mgroup">
    <div class="mhead">${esc(g.k)}<span>${rub(g.sum)}</span></div>
    <div class="rows"><ul class="list pad12">${g.items.map(e=>`<li>
@@ -885,8 +962,10 @@ document.addEventListener('click',e=>{
   rows.forEach(k=>{const r=document.querySelector(`#kidlist .row[data-k="${k}"]`);
    if(r)r.classList.add('open');});
   return;}
+ // Раскрывается только строка, у которой есть что показать: у обязательства без
+ // комментария тела нет, и рамка «раскрыто» вокруг пустоты выглядела бы ошибкой.
  const rh=e.target.closest('.row-h');
- if(rh)rh.parentElement.classList.toggle('open');});
+ if(rh&&rh.parentElement.querySelector('.row-b'))rh.parentElement.classList.toggle('open');});
 
 }
 
