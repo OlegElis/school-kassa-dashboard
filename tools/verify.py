@@ -18,6 +18,8 @@ import os
 import re
 import sys
 
+from openpyxl import load_workbook
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -60,6 +62,76 @@ def gen_iters():
     if not m:
         sys.exit("не нашёл PBKDF2_ITERS в tools/build_report.py")
     return int(m.group(1))
+
+
+def gen_const(pattern, what):
+    """Константа из генератора. Читается оттуда, а не дублируется здесь: разъехавшись,
+    копия молча увела бы проверку не на те строки журнала или не на ту подпись."""
+    m = re.search(pattern, open(GEN, encoding="utf-8").read(), re.M)
+    if not m:
+        sys.exit(f"не нашёл {what} в tools/build_report.py")
+    return m.groups()
+
+
+def money(sheet, row, col):
+    """Число из ячейки; пусто и текст считаются нулём - как num() в генераторе."""
+    v = sheet.cell(row=row, column=col).value
+    return v if isinstance(v, (int, float)) else 0
+
+
+def leak_check(html, data):
+    """Технические строки листа «Ученики» - те, что помечены в колонке L как
+    «Не ученик…», - бывают двух видов, и проверяются они по-разному.
+
+    У кого есть деньги (соседний класс, скинувшийся на декор), имя стоит на
+    странице по замыслу: без блока «Поступления не от учеников класса» сумма
+    видимых остатков не сходится с остатком кассы. Такие строки под шаблон маски
+    не подходят и из проверки формы имени исключены - как и было.
+
+    У кого денег нет (учитель), имени на странице быть не должно вовсе: строка
+    заведена ради дня рождения, а в колонке C может стоять настоящее ФИО.
+    Проверяется не форма имени, а факт утечки - содержимое колонки C ищется и в
+    расшифрованном payload, и в разметке. Это строже шаблона: шаблон поймал бы
+    только неверно замаскированное имя, а поиск подстроки ловит любое попадание,
+    включая тот день, когда кто-нибудь начнёт брать подпись из колонки C.
+
+    Единственное исключение - когда колонка C дословно совпадает с подписью,
+    которую печатает сам генератор: тогда совпадение даёт его собственный текст,
+    а утекать в такой строке нечему."""
+    src = os.environ.get("SRC", "")
+    if not src or not os.path.exists(src):
+        print("  ....  колонка C технических строк не проверена: нет журнала (SRC)")
+        print("        сборка через ./tools/build.sh журнал передаёт - см. README")
+        return
+    first, last = (int(x) for x in gen_const(
+        r"^S_FIRST, S_LAST,.*=\s*(\d+),\s*(\d+)", "S_FIRST/S_LAST"))
+    label, = gen_const(r'^TEACHER_LABEL\s*=\s*"([^"]*)"', "TEACHER_LABEL")
+    uch = load_workbook(src, data_only=True)["Ученики"]
+    hay = (html + json.dumps(data, ensure_ascii=False)).casefold()
+    checked, as_label, leaked = 0, 0, []
+    for r in range(first, last + 1):
+        name = str(uch.cell(row=r, column=3).value or "").strip()
+        note = str(uch.cell(row=r, column=12).value or "").strip().lower()
+        if not name or not note.startswith("не ученик"):
+            continue
+        # E - внесено, J - остаток. Деньги есть хотя бы в одной - это плательщик,
+        # и его имя стоит на странице по замыслу.
+        if money(uch, r, 5) or money(uch, r, 10):
+            continue
+        if name == label:
+            as_label += 1                  # это и есть подпись из генератора
+            continue
+        checked += 1
+        if name.casefold() in hay:
+            leaked.append(f"строка {r}: «{name}»")
+    if not checked:
+        print(f'  ok    технические строки без денег: {as_label} шт., все названы '
+              f'подписью «{label}» из кода - утекать нечему'
+              if as_label else "  ok    технических строк без денег в журнале нет")
+        return
+    check(not leaked,
+          f"колонка C технических строк на страницу не попала ({checked} шт.)",
+          f"имя из журнала попало на страницу - {'; '.join(leaked)}")
 
 
 def rub(n):
@@ -125,11 +197,17 @@ def main():
     # расходы делятся не на них, и в счёт детей они не идут.
     own = [k for k in kids if not k.get("ext")]
     ext = [k for k in kids if k.get("ext")]
+    # Учитель тоже «не ученик», но плательщиком не является: денег за ним нет,
+    # и в блок поступлений он не идёт. В счётчике их смешивать нельзя.
+    payers = [k for k in ext if not k.get("teach")]
+    tech = [k for k in ext if k.get("teach")]
 
     print("\nСодержимое")
     print(f"        детей: {len(own)}")
-    if ext:
-        print(f"        внешних плательщиков: {len(ext)}")
+    if payers:
+        print(f"        внешних плательщиков: {len(payers)}")
+    if tech:
+        print(f"        технических строк: {len(tech)}")
     print(f"        сборов: {len(sbory)}")
     print(f"        расходов: {len(spends)}")
     if promises:
@@ -181,6 +259,8 @@ def main():
     leaked = sorted({n for n in names if not MASKED.match(n)})
     check(not leaked, f"все имена в payload замаскированы ({len(names)} шт.)",
           f"незамаскированных имён: {len(leaked)} - собрано без MASK=1")
+
+    leak_check(html, data)
 
     treas = re.search(r"казначей ([^<]+)</div>", html)
     check(treas is not None and MASKED.match(treas.group(1).strip()) is not None,

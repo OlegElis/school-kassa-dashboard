@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Интерактивный отчёт для родителей. Собирается ИЗ журнала кассы, руками не правится."""
-import datetime, json
+import datetime, json, re
 from openpyxl import load_workbook
 
 import os
@@ -94,6 +94,27 @@ def num(x):
     return x if isinstance(x, (int, float)) else 0
 
 
+def bday(x):
+    """День и месяц из колонки K. В журнале там текст «07.03.2018», но стоит один
+    раз ввести дату не текстом, и Таблицы отдадут настоящую дату: str() даст
+    «2026-08-30 00:00:00», срез - «2026-», и в календаре появится NaN. Поэтому
+    дата разбирается как дата, а из текста берётся только «ДД.ММ» и только если
+    это действительно «ДД.ММ»: пустой MINIFS приходит как time(0, 0), у которого
+    срез дал бы «00:00»."""
+    if isinstance(x, (datetime.datetime, datetime.date)):
+        return x.strftime("%d.%m")
+    s = str(x or "").strip()[:5]
+    return s if re.fullmatch(r"\d{2}\.\d{2}", s) else ""
+
+
+# Подпись строки учителя на странице. Имя из колонки C журнала наружу не идёт:
+# там может оказаться настоящее ФИО, а публичная версия его не показывает.
+# Это подпись элемента интерфейса, а не данные: дата рождения и сам факт строки
+# лежат в журнале. tools/verify.py читает эту строку отсюда - она единственная,
+# которой техническая строка вправе совпасть с содержимым страницы.
+TEACHER_LABEL = "Учитель класса"
+
+
 def schedule(title):
     """График платежей сбора с листа «График»: B сбор, C дата, D сумма, E комментарий.
     Порядок в журнале не гарантирован, поэтому сортируем по дате сами."""
@@ -162,22 +183,35 @@ for r in range(S_FIRST, S_LAST + 1):
     n = uch.cell(row=r, column=3).value
     if not n:
         continue
-    # Колонка L - комментарий. «Не ученик…» помечает внешнего плательщика (соседний
-    # класс, делящий кабинет): его деньги лежат в кассе, но ребёнком класса он не
-    # считается - ни в чипах, ни в знаменателе доли расходов, ни в основной таблице.
-    ext = str(uch.cell(row=r, column=12).value or "").strip().lower().startswith("не ученик")
+    # Колонка L - комментарий. «Не ученик…» помечает строку, которая ребёнком класса
+    # не считается - ни в чипах, ни в знаменателе доли расходов, ни в основной таблице.
+    # Таких строк два вида, и различает их ключевое слово в той же пометке:
+    # внешний плательщик (соседний класс, делящий кабинет) - его деньги лежат в кассе
+    # и показаны отдельным блоком; и учитель - у него нет ни взносов, ни остатка,
+    # строка нужна только ради дня рождения в календаре.
+    note = str(uch.cell(row=r, column=12).value or "").strip().lower()
+    ext = note.startswith("не ученик")
+    teach = ext and "учитель" in note
     # ord - позиция в журнале, то есть порядок по фамилии. Наружу уходит только число:
     # оно служит скрытым ключом сортировки и вторичным ключом при равных суммах.
-    kids.append({"row": r, "col": MC + (r - S_FIRST), "ord": len(kids) + 1, "raw": n, "name": pub(n),
-                 "ext": ext,
+    kids.append({"row": r, "col": MC + (r - S_FIRST), "ord": len(kids) + 1, "raw": n,
+                 # У учителя на странице подпись из кода, а не имя из журнала:
+                 # в колонке C может оказаться настоящее ФИО.
+                 "name": TEACHER_LABEL if teach else pub(n),
+                 "ext": ext, "teach": teach,
                  "prev": num(uch.cell(row=r, column=4).value),
                  "paid": num(uch.cell(row=r, column=5).value),
                  "debtY": num(uch.cell(row=r, column=7).value),
                  "debtN": num(uch.cell(row=r, column=8).value),
                  "share": num(uch.cell(row=r, column=9).value),
                  "rest": num(uch.cell(row=r, column=10).value),
-                 "bday": str(uch.cell(row=r, column=11).value or "")[:5],
-                 "first": (n.split()[1] if len(n.split()) > 1 else n), "by": []})
+                 "bday": bday(uch.cell(row=r, column=11).value),
+                 # first - имя для списков участников. У учителя участия в сборах нет,
+                 # и выводить из колонки C нечего: «Учитель класса» дало бы «класса»,
+                 # а настоящее ФИО - настоящее имя. Из колонки C у учителя на страницу
+                 # не уходит ни одно поле, включая производные.
+                 "first": TEACHER_LABEL if teach else (n.split()[1] if len(n.split()) > 1 else n),
+                 "by": []})
 
 sbory = []
 for r in range(B_FIRST, B_LAST + 1):
@@ -235,7 +269,6 @@ all_spends = [{"date": dt(rs.cell(row=e, column=2).value), "sbor": rs.cell(row=e
                "comment": rs.cell(row=e, column=10).value or ""}
               for e in range(6, 66) if rs.cell(row=e, column=6).value]
 
-TEACHER = {"name": "Учитель класса", "date": "30.08", "role": "учитель"}
 EVENTS = []
 for s in sbory:
     if s["sched"]:
@@ -253,7 +286,7 @@ for s in sbory:
     if s["event"]:
         EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
                        "title": s["title"]})
-DATA = json.dumps({"t": totals, "teacher": TEACHER, "events": EVENTS, "sbory": sbory,
+DATA = json.dumps({"t": totals, "events": EVENTS, "sbory": sbory,
                    "spends": all_spends, "promises": promises,
                    "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
                   ensure_ascii=False)
@@ -730,7 +763,8 @@ renderSbory();
 // поиск, сортировка и деление расходов; EXT - чужие деньги, лежащие в той же
 // кассе (сосед по кабинету скинулся на декор). Их остаток входит в остаток
 // кассы, поэтому он показан отдельным блоком, а не спрятан.
-const OWN=D.kids.filter(k=>!k.ext), EXT=D.kids.filter(k=>k.ext);
+const OWN=D.kids.filter(k=>!k.ext),
+      EXT=D.kids.filter(k=>k.ext&&!k.teach&&k.rest!==0);
 let KFILTER='all';
 function renderKids(f){f=(f||'').trim().toLowerCase();
  let L=OWN.filter(k=>!f||k.name.toLowerCase().includes(f));
@@ -796,6 +830,9 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
 // Блок внешних плательщиков не зависит от поиска, сортировки и чипов: он собирается
 // один раз и стоит между таблицей и подписью. Без него сумма видимых остатков
 // не сходится с остатком кассы.
+// Учитель тоже «не ученик», но денег за ним нет - в блоке поступлений ему нечего
+// показывать. Отсекается и по признаку, и по нулевой сумме: признак говорит, что
+// это за строка, а сумма - что в блоке о ней вообще можно написать.
 document.getElementById('kidext').innerHTML=EXT.length?`<h2>Поступления не от учеников класса</h2>
  <div class="rows"><ul class="list pad12">${EXT.map(k=>
   `<li>${esc(k.name)}<span class="amt">${rub(k.rest)}</span></li>`).join('')}</ul></div>`:'';
@@ -819,10 +856,7 @@ const bd=D.kids.filter(k=>k.bday).map(k=>{
  const [d,m]=k.bday.split('.').map(Number);
  let y=TODAY.getFullYear(), next=new Date(y,m-1,d);
  if(next<TODAY)next=new Date(y+1,m-1,d);
- return {name:k.name,date:k.bday,in:Math.round((next-TODAY)/86400000)};});
-if(D.teacher){const [td,tm]=D.teacher.date.split('.').map(Number);
- let ty=TODAY.getFullYear(),tn=new Date(ty,tm-1,td); if(tn<TODAY)tn=new Date(ty+1,tm-1,td);
- bd.push({...D.teacher,in:Math.round((tn-TODAY)/86400000)});}
+ return {name:k.name,role:k.teach,date:k.bday,in:Math.round((next-TODAY)/86400000)};});
 bd.sort((a,b)=>a.in-b.in);
 const MONT=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август',
  'Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -832,8 +866,10 @@ const daysTo=(d,m)=>{let y=TODAY.getFullYear(),n=new Date(y,m-1,d);
  if(n<TODAY)n=new Date(y+1,m-1,d);return {in:Math.round((n-TODAY)/86400000),y:n.getFullYear()};};
 const ALL=[];
 bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
+ // У учителя name - уже готовая подпись из генератора, сокращать её как «Фамилия И.»
+ // нечего: в плитке ближайшего месяца она показывается одним словом.
  ALL.push({kind:b.role?'teacher':'bd',d:d,m:m,in:r.in,
-  name:b.role?'Учитель класса':b.name,short:b.role?'Учитель':short(b.name)});});
+  name:b.name,short:b.role?'Учитель':short(b.name)});});
 (D.events||[]).forEach(e=>{const [d,m]=e.date.split('.').map(Number);const r=daysTo(d,m);
  ALL.push({kind:e.kind,d:d,m:m,in:r.in,name:e.title,short:e.title,code:e.code});});
 ALL.sort((a,b)=>a.in-b.in);
@@ -1008,7 +1044,12 @@ open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLO
                                         .replace("__YEAR__", str(AS_OF.year))
                                         .replace("__MONTH__", str(AS_OF.month))
                                         .replace("__DAY__", str(AS_OF.day)))
-_ext = sum(1 for k in kids if k["ext"])
+# Учитель помечен как «не ученик», но плательщиком не является: в счётчике он
+# идёт отдельно, иначе строка отчёта расходится с блоком поступлений на странице.
+_ext = sum(1 for k in kids if k["ext"] and not k["teach"])
+_tch = sum(1 for k in kids if k["teach"])
 _pl = "внешний плательщик" if _ext % 10 == 1 and _ext % 100 != 11 else "внешних плательщиков"
-print("report ok ·", len(sbory), "сборов ·", len(kids) - _ext, "детей"
-      + (f" · {_ext} {_pl}" if _ext else ""))
+_ts = "техническая строка" if _tch % 10 == 1 and _tch % 100 != 11 else "технических строк"
+print("report ok ·", len(sbory), "сборов ·", len(kids) - _ext - _tch, "детей"
+      + (f" · {_ext} {_pl}" if _ext else "")
+      + (f" · {_tch} {_ts}" if _tch else ""))

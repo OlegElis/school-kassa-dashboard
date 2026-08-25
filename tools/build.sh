@@ -123,6 +123,8 @@ MASK=1 PASSWORD="$PASSWORD" AS_OF="$DATE" STAMP="$STAMP" SRC="$SRC" OUT="$REPO/i
     "$PY" tools/build_report.py
 
 printf '\n'
-if ! PASSWORD="$PASSWORD" "$PY" tools/verify.py "$REPO/index.html"; then
+# SRC передаётся и в verify: одна из проверок ищет на странице имена технических
+# строк журнала («Не ученик…» без денег) - без журнала ей неоткуда их взять.
+if ! PASSWORD="$PASSWORD" SRC="$SRC" "$PY" tools/verify.py "$REPO/index.html"; then
     die "" "СБОРКА НЕ ПРИНЯТА: verify.py вернул ошибку. Такой файл не публикуют."
 fi
