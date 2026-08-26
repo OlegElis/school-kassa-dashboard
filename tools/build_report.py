@@ -3,6 +3,8 @@
 import datetime, json, re
 from openpyxl import load_workbook
 
+import journal
+
 import os
 SRC = os.environ.get("SRC", "/home/claude/Касса_2В_2026-2027.xlsx")
 OUT = os.environ.get("OUT", "/home/claude/index.html")
@@ -69,17 +71,30 @@ def pub(n):
         return n
     parts = str(n).split()
     return f"{parts[1]} {parts[0][0]}." if len(parts) > 1 else n
-S_FIRST, S_LAST, B_FIRST, B_LAST, MC = 6, 27, 6, 17, 4
+
 
 wb = load_workbook(SRC, data_only=True)
 sv, sb, uch, dgy, dgs, uc, vz, rs = (wb["Свод"], wb["Сборы"], wb["Ученики"], wb["Долги_год"],
                                      wb["Долги_срок"], wb["Участие"], wb["Взносы"], wb["Расходы"])
 gr = wb["График"]
-GR_FIRST, GR_LAST = 6, 45
 # Обещанное, но не оплаченное. Лист появился позже остальных, поэтому его
 # отсутствие - не ошибка: у прошлогоднего журнала его просто нет.
 ob = wb["Обязательства"] if "Обязательства" in wb.sheetnames else None
-OB_FIRST, OB_LAST = 6, 25
+
+# Границы данных не записаны числами: их читает journal.bounds() из самого журнала -
+# по шапке сверху и по строке «ИТОГО…» снизу. Класс растёт посреди года, под списки
+# в журнале расширяют запас строк, и константа в этот день молча теряет хвост списка.
+# Пустой диапазон для отсутствующих «Обязательств» - тот же случай, что лист без строк.
+S_FIRST, S_LAST = journal.bounds(uch, "№")
+B_FIRST, B_LAST = journal.bounds(sb, "Код")
+GR_FIRST, GR_LAST = journal.bounds(gr, "Сбор")
+VZ_FIRST, VZ_LAST = journal.bounds(vz, "Дата")
+RS_FIRST, RS_LAST = journal.bounds(rs, "Дата")
+OB_FIRST, OB_LAST = journal.bounds(ob, "Срок") if ob is not None else (0, -1)
+# Колонка ребёнка в матрицах выводится из номера его строки, поэтому matrix_col
+# заодно сверяет имена в шапках со списком: разъехавшись, они выдали бы детям
+# чужие долги, и отчёт всё равно собрался бы.
+MC = journal.matrix_col(uch, S_FIRST, S_LAST, (uc, dgy, dgs))
 
 
 def dt(x):
@@ -224,7 +239,7 @@ for r in range(B_FIRST, B_LAST + 1):
     for k in kids:
         if uc.cell(row=r, column=k["col"]).value != 1:
             continue
-        p = sum(num(vz.cell(row=vr, column=5).value) for vr in range(6, 86)
+        p = sum(num(vz.cell(row=vr, column=5).value) for vr in range(VZ_FIRST, VZ_LAST + 1)
                 if vz.cell(row=vr, column=3).value == k["raw"]
                 and vz.cell(row=vr, column=4).value == title)
         dy, dn = num(dgy.cell(row=r, column=k["col"]).value), num(dgs.cell(row=r, column=k["col"]).value)
@@ -236,7 +251,7 @@ for r in range(B_FIRST, B_LAST + 1):
     spends = [{"date": dt(rs.cell(row=e, column=2).value), "what": rs.cell(row=e, column=4).value or "",
                "amount": num(rs.cell(row=e, column=6).value),
                "proof": str(rs.cell(row=e, column=9).value or "со слов").lower()}
-              for e in range(6, 66)
+              for e in range(RS_FIRST, RS_LAST + 1)
               if rs.cell(row=e, column=3).value == title and rs.cell(row=e, column=6).value]
     sbory.append({"code": sb.cell(row=r, column=2).value or "", "title": title, "per": per,
                   "first": first, "due": dt(sb.cell(row=r, column=6).value),
@@ -255,7 +270,7 @@ for k in kids:
                   "sbor": vz.cell(row=vr, column=4).value or "",
                   "amount": num(vz.cell(row=vr, column=5).value),
                   "way": vz.cell(row=vr, column=6).value or ""}
-                 for vr in range(6, 86)
+                 for vr in range(VZ_FIRST, VZ_LAST + 1)
                  if vz.cell(row=vr, column=3).value == k["raw"] and vz.cell(row=vr, column=5).value]
 
 # Колонка J - комментарий к расходу: расшифровка чека, «из чего сложилась сумма».
@@ -267,7 +282,7 @@ all_spends = [{"date": dt(rs.cell(row=e, column=2).value), "sbor": rs.cell(row=e
                "amount": num(rs.cell(row=e, column=6).value),
                "proof": str(rs.cell(row=e, column=9).value or "со слов").lower(),
                "comment": rs.cell(row=e, column=10).value or ""}
-              for e in range(6, 66) if rs.cell(row=e, column=6).value]
+              for e in range(RS_FIRST, RS_LAST + 1) if rs.cell(row=e, column=6).value]
 
 EVENTS = []
 for s in sbory:

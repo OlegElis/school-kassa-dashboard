@@ -20,6 +20,8 @@ import sys
 
 from openpyxl import load_workbook
 
+import journal
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -79,7 +81,44 @@ def money(sheet, row, col):
     return v if isinstance(v, (int, float)) else 0
 
 
-def leak_check(html, data):
+def roster():
+    """Лист «Ученики» и границы списка - для проверок, которым нужен журнал.
+
+    Границы берутся тем же journal.bounds(), что и в генераторе: разойдясь, копия
+    молча увела бы проверку не на те строки. None означает, что журнал не передан -
+    verify запускают и руками, над файлом, собранным раньше.
+    """
+    src = os.environ.get("SRC", "")
+    if not src or not os.path.exists(src):
+        return None
+    uch = load_workbook(src, data_only=True)["Ученики"]
+    first, last = journal.bounds(uch, "№")
+    return uch, first, last
+
+
+def count_check(data, spisok):
+    """Сколько строк в списке класса - столько и на странице.
+
+    Это проверка ровно того, чем оборачивается уехавшая граница списка: цикл по
+    слишком короткому диапазону не падает, он молча не доходит до последних детей.
+    Генератор такую потерю не заметит - у него в журнале ровно то, что он прочитал,
+    - поэтому список пересчитывается здесь заново, от шапки до строки «ИТОГО».
+    """
+    uch, first, last = spisok
+    rows = [r for r in range(first, last + 1) if str(uch.cell(row=r, column=3).value or "").strip()]
+    ext = [r for r in rows
+           if str(uch.cell(row=r, column=12).value or "").strip().lower().startswith("не ученик")]
+    want, got = len(rows) - len(ext), len([k for k in data["kids"] if not k.get("ext")])
+    check(want == got, f"детей на странице столько же, сколько в журнале ({got})",
+          f"в журнале {want} детей (строки {first}-{last}), а на странице {got} - "
+          f"часть списка потерялась по дороге")
+    want_ext, got_ext = len(ext), len([k for k in data["kids"] if k.get("ext")])
+    check(want_ext == got_ext,
+          f"строк «Не ученик…» на странице столько же, сколько в журнале ({got_ext})",
+          f"в журнале {want_ext} таких строк, а на странице {got_ext}")
+
+
+def leak_check(html, data, spisok):
     """Технические строки листа «Ученики» - те, что помечены в колонке L как
     «Не ученик…», - бывают двух видов, и проверяются они по-разному.
 
@@ -98,15 +137,8 @@ def leak_check(html, data):
     Единственное исключение - когда колонка C дословно совпадает с подписью,
     которую печатает сам генератор: тогда совпадение даёт его собственный текст,
     а утекать в такой строке нечему."""
-    src = os.environ.get("SRC", "")
-    if not src or not os.path.exists(src):
-        print("  ....  колонка C технических строк не проверена: нет журнала (SRC)")
-        print("        сборка через ./tools/build.sh журнал передаёт - см. README")
-        return
-    first, last = (int(x) for x in gen_const(
-        r"^S_FIRST, S_LAST,.*=\s*(\d+),\s*(\d+)", "S_FIRST/S_LAST"))
+    uch, first, last = spisok
     label, = gen_const(r'^TEACHER_LABEL\s*=\s*"([^"]*)"', "TEACHER_LABEL")
-    uch = load_workbook(src, data_only=True)["Ученики"]
     hay = (html + json.dumps(data, ensure_ascii=False)).casefold()
     checked, as_label, leaked = 0, 0, []
     for r in range(first, last + 1):
@@ -249,6 +281,18 @@ def main():
         check(not bad, f"доля расходов у всех детей одна ({rub(share)} ₽)",
               f"доля расходов разъехалась у {len(bad)} детей")
 
+    # Проверки, сверяющие страницу с журналом, требуют SRC: verify запускают и
+    # руками, над файлом, собранным раньше. Список читается один раз на обе.
+    spisok = roster()
+    no_src = "        сборка через ./tools/build.sh журнал передаёт - см. README"
+
+    print("\nСписок класса")
+    if spisok is None:
+        print("  ....  список не сверялся с журналом: нет журнала (SRC)")
+        print(no_src)
+    else:
+        count_check(data, spisok)
+
     print("\nПерсональные данные")
     # Имена внешних плательщиков - не фамилии детей («Соседи»), под шаблон маски
     # они не подходят и проверяются не здесь. Собранное без MASK=1 всё равно
@@ -260,7 +304,11 @@ def main():
     check(not leaked, f"все имена в payload замаскированы ({len(names)} шт.)",
           f"незамаскированных имён: {len(leaked)} - собрано без MASK=1")
 
-    leak_check(html, data)
+    if spisok is None:
+        print("  ....  колонка C технических строк не проверена: нет журнала (SRC)")
+        print(no_src)
+    else:
+        leak_check(html, data, spisok)
 
     treas = re.search(r"казначей ([^<]+)</div>", html)
     check(treas is not None and MASKED.match(treas.group(1).strip()) is not None,
