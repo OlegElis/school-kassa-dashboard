@@ -8,28 +8,25 @@ import journal
 import os
 SRC = os.environ.get("SRC", "/home/claude/Касса_2В_2026-2027.xlsx")
 OUT = os.environ.get("OUT", "/home/claude/index.html")
-MASK = os.environ.get("MASK") == "1"
 PASSWORD = os.environ.get("PASSWORD", "")
 ALLOW_UNSAFE = os.environ.get("ALLOW_UNSAFE") == "1"
 
-# Предохранители. Публичная версия обязана быть зашифрованной и обезличенной,
-# поэтому пустой PASSWORD и MASK != 1 — это остановка сборки, а не предупреждение.
-# ALLOW_UNSAFE=1 снимает обе проверки разом: только для именной незашифрованной
+# Предохранитель. Маскировки имён больше нет (см. pub()), и шифрование осталось
+# единственным, что закрывает страницу от постороннего: с пустым PASSWORD в файл
+# легли бы открытым текстом фамилия, имя, день рождения и долг каждого ребёнка.
+# Раньше в паре с этой проверкой стояла вторая, на MASK; после возврата полных
+# имён флаг MASK перестал что-либо обезличивать и убран - оставленный, он врал бы
+# следующему читателю про вторую линию защиты, которой нет.
+# Проверка идёт до чтения журнала. ALLOW_UNSAFE=1 снимает её: только для именной
 # версии, которая остаётся в папке Свод на Google Диске и в репозиторий не идёт.
-if not ALLOW_UNSAFE:
-    if not PASSWORD:
-        raise SystemExit(
-            "СБОРКА ОСТАНОВЛЕНА: PASSWORD пуст.\n"
-            "Страница собралась бы в открытом виде — payload лежал бы в HTML как есть,\n"
-            "и все цифры прочитал бы любой, кто открыл ссылку или скачал файл.\n"
-            "Задайте PASSWORD='кодовое-слово' либо, если версия намеренно не для\n"
-            "публикации, соберите с ALLOW_UNSAFE=1.")
-    if not MASK:
-        raise SystemExit(
-            "СБОРКА ОСТАНОВЛЕНА: MASK не равен 1.\n"
-            "В файл попали бы полные фамилии детей и казначея вместо «Артур Е.».\n"
-            "Задайте MASK=1 либо, если версия намеренно не для публикации,\n"
-            "соберите с ALLOW_UNSAFE=1.")
+if not ALLOW_UNSAFE and not PASSWORD:
+    raise SystemExit(
+        "СБОРКА ОСТАНОВЛЕНА: PASSWORD пуст.\n"
+        "Страница собралась бы в открытом виде — payload лежал бы в HTML как есть,\n"
+        "и все данные прочитал бы любой, кто открыл ссылку или скачал файл:\n"
+        "имена детей на странице полные, шифрование - единственное, что их закрывает.\n"
+        "Задайте PASSWORD='кодовое-слово' либо, если версия намеренно не для\n"
+        "публикации, соберите с ALLOW_UNSAFE=1.")
 
 _as_of = os.environ.get("AS_OF", "").strip()
 try:
@@ -66,11 +63,25 @@ def encrypt_payload(plaintext: str, password: str) -> str:
 
 
 def pub(n):
-    """Публичная форма имени: «Елисеев Артур» -> «Артур Е.». Фамилия не раскрывается."""
-    if not MASK or not n:
-        return n
-    parts = str(n).split()
-    return f"{parts[1]} {parts[0][0]}." if len(parts) > 1 else n
+    """Имя для страницы. Точка, где решается формат: раньше отсюда выходило
+    «Артур Е.», теперь - колонка C журнала как есть, «Елисеев Артур».
+
+    Решение родкома от 27.08.2026: с 26 детьми подпись «Артур Е.» неудобно искать
+    глазами в списке. Риск обсуждали и приняли - код доступа знают все семьи
+    класса, и при его утечке наружу уходят фамилия, имя, день рождения и долг
+    каждого ребёнка. Формат «Фамилия Имя» повторяет журнал: список отсортирован
+    по фамилии, и страница читается в том же порядке, что бумажный список.
+
+    Функция оставлена именно как эта точка. Менять формат - здесь, в одном месте,
+    а не в полудюжине мест вёрстки.
+    """
+    return str(n or "").strip()
+
+
+# Подпись казначея на странице. Осталась короткой намеренно: решение родкома
+# касалось списка детей, про казначея речи не было, а его фамилия - такие же
+# персональные данные третьего лица. Одна строка, если решат иначе.
+TREASURER_LABEL = "Анна Е."
 
 
 wb = load_workbook(SRC, data_only=True)
@@ -221,11 +232,6 @@ for r in range(S_FIRST, S_LAST + 1):
                  "share": num(uch.cell(row=r, column=9).value),
                  "rest": num(uch.cell(row=r, column=10).value),
                  "bday": bday(uch.cell(row=r, column=11).value),
-                 # first - имя для списков участников. У учителя участия в сборах нет,
-                 # и выводить из колонки C нечего: «Учитель класса» дало бы «класса»,
-                 # а настоящее ФИО - настоящее имя. Из колонки C у учителя на страницу
-                 # не уходит ни одно поле, включая производные.
-                 "first": TEACHER_LABEL if teach else (n.split()[1] if len(n.split()) > 1 else n),
                  "by": []})
 
 sbory = []
@@ -243,7 +249,7 @@ for r in range(B_FIRST, B_LAST + 1):
                 if vz.cell(row=vr, column=3).value == k["raw"]
                 and vz.cell(row=vr, column=4).value == title)
         dy, dn = num(dgy.cell(row=r, column=k["col"]).value), num(dgs.cell(row=r, column=k["col"]).value)
-        parts.append({"ord": k["ord"], "first": k["first"], "name": k["name"], "paid": p,
+        parts.append({"ord": k["ord"], "name": k["name"], "paid": p,
                       "debtY": dy, "debtN": dn, "rest": p - share})
         k["by"].append({"sbor": title, "code": sb.cell(row=r, column=2).value or "",
                         "plan": per, "first": first, "paid": p,
@@ -573,6 +579,13 @@ PAGE = r"""<!DOCTYPE html>
   /* Имя + «внёс …» + «до 30.09 - …» в одну строку при 375px не помещаются:
      разрешаем перенос, сумма остаётся прижатой вправо на второй строке. */
   ul.list li{flex-wrap:wrap;row-gap:2px;}
+  /* Полное «Фамилия Имя» рядом с двумя колонками чисел на 390px не умещается,
+     а обрезать его многоточием - терять ровно то, ради чего имя сделали полным
+     («Воробушкина С…» не найти глазами). Разрешаем перенос: выше становятся
+     только те строки, которым не хватило места.
+     overflow-wrap - на 320px не помещается уже одна «Воробушкина»: без него
+     слово вылезло бы на колонку с суммой. */
+  .row-h .nm{white-space:normal;overflow-wrap:anywhere;}
  }
  /* Таблица по сборам ребёнка вместо прокрутки на 640px разбирается в карточки
     «показатель - значение»: на телефоне боковой скролл внутри карточки не читается.
@@ -724,13 +737,13 @@ if(tiles.length-(T.promised?1:0)===3)document.getElementById('tiles').classList.
 // Первый клик по колонке даёт направление из SDEF, повторный - разворачивает.
 let SORT='name', SDIR=1;
 const SDEF={name:1,debt:-1,rest:1};
-// ord - порядок по фамилии, вторичный ключ: суммы часто совпадают (у многих ровно
+// ord - порядок строк в журнале, вторичный ключ: суммы часто совпадают (у многих ровно
 // по 2000 к сроку), и без него строки при равных значениях прыгали бы при перерисовке.
 const cmp=(a,b)=>{
  let r;
  if(SORT==='debt')r=(a.debtN||0)-(b.debtN||0);
  else if(SORT==='rest')r=(a.rest||0)-(b.rest||0);
- else r=String(a.first||a.name).localeCompare(String(b.first||b.name),'ru');
+ else r=String(a.name).localeCompare(String(b.name),'ru');
  return (r*SDIR)||((a.ord||0)-(b.ord||0));};
 const sortHead=(key,label,cls)=>
  `<button class="sh ${cls}" data-sort="${key}" aria-pressed="${SORT===key}">${label}<span
@@ -895,18 +908,17 @@ const bd=D.kids.filter(k=>k.bday).map(k=>{
 bd.sort((a,b)=>a.in-b.in);
 const MONT=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август',
  'Сентябрь','Октябрь','Ноябрь','Декабрь'];
-const short=n=>{const p=n.split(' ');return p.length>1?p[0]+' '+p[1][0]+'.':n;};
 const curM=TODAY.getMonth();
 const daysTo=(d,m)=>{let y=TODAY.getFullYear(),n=new Date(y,m-1,d);
  if(n<TODAY)n=new Date(y+1,m-1,d);return {in:Math.round((n-TODAY)/86400000),y:n.getFullYear()};};
 const ALL=[];
 bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
- // У учителя name - уже готовая подпись из генератора, сокращать её как «Фамилия И.»
- // нечего: в плитке ближайшего месяца она показывается одним словом.
- ALL.push({kind:b.role?'teacher':'bd',d:d,m:m,in:r.in,
-  name:b.name,short:b.role?'Учитель':short(b.name)});});
+ // Имя в клетке календаря больше не сокращается: сокращённая форма вернула бы
+ // на страницу ровно ту подпись, от которой родком отказался. Длинное имя
+ // обрезается многоточием средствами CSS (.m li span), а не логикой.
+ ALL.push({kind:b.role?'teacher':'bd',d:d,m:m,in:r.in,name:b.name});});
 (D.events||[]).forEach(e=>{const [d,m]=e.date.split('.').map(Number);const r=daysTo(d,m);
- ALL.push({kind:e.kind,d:d,m:m,in:r.in,name:e.title,short:e.title,code:e.code});});
+ ALL.push({kind:e.kind,d:d,m:m,in:r.in,name:e.title,code:e.code});});
 ALL.sort((a,b)=>a.in-b.in);
 const KIND={bd:'др',teacher:'др',due:'срок',event:'событие'};
 const dd=n=>String(n).padStart(2,'0');
@@ -928,7 +940,7 @@ document.getElementById('pane-bdays').innerHTML=ALL.length?`
    return `<div class="m${m===curM?' cur':''}${items.length?'':' mt'}">
     <h4>${MONT[m]}</h4>
     ${items.length?`<ul>${items.map(e=>`<li class="${e.in<=14?'soon':''} l-${e.kind}">
-      <b>${dd(e.d)}</b><span>${esc(e.short)}</span></li>`).join('')}</ul>`
+      <b>${dd(e.d)}</b><span>${esc(e.name)}</span></li>`).join('')}</ul>`
      :'<div class="none">-</div>'}</div>`;}).join('')}</div>`
  :'<div class="empty">Событий нет.</div>';
 
@@ -1072,8 +1084,8 @@ PAGE = PAGE.replace("\u2014", "-").replace("\u2013", "-")
 PAYLOAD = ("ENC:" + encrypt_payload(DATA, PASSWORD)) if PASSWORD else DATA
 open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLOAD, ensure_ascii=False) if PASSWORD else DATA)
                                         .replace("__ASOF__", AS_OF.strftime("%d.%m.%Y"))
-                                        .replace("__TREAS__", "Анна Е." if MASK else "Анна Елисеева")
-                                        .replace("__SEARCHPH__", "Найти по имени…" if MASK else "Найти по фамилии…")
+                                        .replace("__TREAS__", TREASURER_LABEL)
+                                        .replace("__SEARCHPH__", "Найти по фамилии или имени…")
                                         .replace("__STAMP__", STAMP)
                                         .replace("__ITERS__", str(PBKDF2_ITERS))
                                         .replace("__YEAR__", str(AS_OF.year))
