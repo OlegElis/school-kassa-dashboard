@@ -479,12 +479,20 @@ PAGE = r"""<!DOCTYPE html>
         min-height:44px;}
  .row-h .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
  /* Ширина фиксированная, а не min-width: при min-width базисом flex берёт содержимое,
-    и пустая ячейка «К сроку» даёт другой базис, чем «2 000 ₽» - строки расходятся
-    между собой и с заголовком. Те же числа продублированы у .sh.due и .sh.bal. */
- .row-h .due{flex:none;width:72px;font-variant-numeric:tabular-nums;white-space:nowrap;
-             font-weight:700;color:var(--bad);font-size:13px;text-align:right;}
- .row-h .bal{flex:none;width:78px;font-variant-numeric:tabular-nums;white-space:nowrap;
-             font-weight:700;text-align:right;}
+    и «долга нет» даёт другой базис, чем «2 000 ₽» - строки расходятся между собой
+    и с заголовком. Те же числа продублированы у .sh.due и .sh.bal. */
+ /* Две строки: сверху долг за год, снизу мелким - сколько из него к сроку.
+    Ширина выросла с 72px под вторую строку; .sh.due обязан идти следом. */
+ .row-h .due{flex:none;width:84px;font-variant-numeric:tabular-nums;
+             font-size:13px;text-align:right;line-height:1.25;}
+ .row-h .due b{display:block;font-weight:700;color:var(--ink);}
+ /* Красным - только те, у кого ближайший платёж ещё не закрыт. У остальных долг
+    за год такой же настоящий, но несрочный, и красным он звал бы платить сегодня. */
+ .row-h .due.now b{color:var(--bad);}
+ .row-h .due i{display:block;font-style:normal;font-size:10px;color:var(--dim);}
+ .row-h .due i.free{color:var(--good);}
+ .row-h .bal{flex:none;width:84px;padding-left:6px;font-weight:700;text-align:right;
+             font-variant-numeric:tabular-nums;white-space:nowrap;}
  .row-h .bal.neg{color:var(--bad);}
  /* Обязательство: в шапке строки две строчки - «на что» и «кому», поэтому это не
     .nm с обрезкой в одну строку. Строка без комментария не раскрывается. */
@@ -498,17 +506,20 @@ PAGE = r"""<!DOCTYPE html>
  .row-head{display:flex;align-items:center;gap:7px;padding:0 11px;background:#fbfcfe;
            border-bottom:1px solid var(--line);font-size:10.5px;text-transform:uppercase;
            color:var(--dim);font-weight:600;}
+ /* Заголовки переносятся, а не режутся: «Должен за год» и «Не потрачено» в одну
+    строку на 390px не помещаются и слипались друг с другом. */
  .sh{border:0;background:transparent;font:inherit;font-size:10.5px;text-transform:uppercase;
      letter-spacing:.04em;color:var(--dim);font-weight:600;cursor:pointer;padding:0;
-     display:flex;align-items:center;gap:3px;min-height:44px;white-space:nowrap;}
+     display:flex;align-items:center;gap:3px;min-height:44px;line-height:1.25;}
+ .sh.due,.sh.bal{flex-wrap:wrap;align-content:center;}
  .sh[aria-pressed=true]{color:var(--accent);}
  /* Стрелка занимает место всегда, даже пустая: иначе колонки дёргаются при смене сортировки */
  .sh .ar{display:inline-block;min-width:9px;font-size:9px;line-height:1;}
  /* flex:1 1 0, как у .row-h .nm: при разном flex-basis свободное место делится
     по-разному и правый край заголовка расходится со строкой на пиксель. */
  .sh.nm{flex:1 1 0;min-width:0;}
- .sh.due{flex:none;width:72px;justify-content:flex-end;}
- .sh.bal{flex:none;width:78px;justify-content:flex-end;}
+ .sh.due{flex:none;width:84px;justify-content:flex-end;text-align:right;}
+ .sh.bal{flex:none;width:84px;padding-left:6px;justify-content:flex-end;}
  .pays{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;}
  .pays-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);
          font-weight:700;margin-bottom:4px;}
@@ -516,8 +527,15 @@ PAGE = r"""<!DOCTYPE html>
  .pay .pd{flex:none;font-variant-numeric:tabular-nums;font-weight:600;}
  .pay .pn{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
  .pay .pa{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;}
- .sum{font-size:12.5px;color:var(--dim);line-height:1.5;padding:6px 2px 8px;}
- .sum b{color:var(--ink);font-variant-numeric:tabular-nums;} .sum b.bad{color:var(--bad);}
+ /* Расшифровка в раскрытой строке: подпись слева, число справа. Раньше здесь
+    шла одна строка через «·», но в ней стало пять величин, и главная терялась. */
+ .brk{font-size:13px;padding:4px 2px 2px;}
+ .brk>div{display:flex;align-items:baseline;gap:12px;padding:6px 0;
+          border-bottom:1px dashed var(--line);}
+ .brk>div:last-child{border-bottom:none;}
+ .brk span{color:var(--dim);}
+ .brk b{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;}
+ .brk b.bad{color:var(--bad);}
  .row-h .chev{color:var(--dim);}
  .row.open .row-h .chev{transform:rotate(180deg);}
  .row.open{border:2px solid var(--accent);border-radius:10px;margin:6px 0;
@@ -712,7 +730,29 @@ const parseD=s=>{const [d,m,y]=String(s).split('.').map(Number);return new Date(
 // и его дата не могут разойтись.
 const dm=d=>String(d||'').slice(0,5);          // «30.09.2026» -> «30.09»
 const DUE={};                                   // сбор -> его ближайший срок
-D.sbory.forEach(s=>{if(s.due)DUE[s.title]=s.due;});
+const SCHED={};                                 // сбор -> шаги графика платежей
+D.sbory.forEach(s=>{if(s.due)DUE[s.title]=s.due;
+ if(s.sched&&s.sched.length)SCHED[s.title]=s.sched;});
+// Что ребёнку осталось внести по графику сбора. Идём по тем же шагам, что
+// нарисованы в карточке сбора, нарастающим итогом и вычитаем уже внесённое.
+// Шаги не позже ближайшего срока схлопываются в один, датированный этим сроком:
+// ровно так журнал считает «не хватает к сроку», и просрочка на странице не
+// заводится - пропущенный платёж от 25.08 показан не отдельной красной датой,
+// а частью планки 30.09.
+const planLeft=b=>{
+ const sc=SCHED[b.sbor]; if(!sc)return null;
+ let cum=0; const out=[];
+ sc.forEach(x=>{const prev=cum; cum+=x.amount;
+  const need=Math.max(0,cum-b.paid)-Math.max(0,prev-b.paid);
+  if(need>0.005)out.push({date:x.date,amount:need});});
+ const due=DUE[b.sbor];
+ if(due&&out.length){
+  const head=out.filter(x=>parseD(x.date)<=parseD(due));
+  if(head.length)out.splice(0,head.length,
+   {date:due,amount:head.reduce((a,x)=>a+x.amount,0)});}
+ // Расшифровка обязана сходиться с числом из журнала: две цифры об одном и том же
+ // не должны расходиться на глазах у родителя. Не сошлось - расшифровки не будет.
+ return Math.abs(out.reduce((a,x)=>a+x.amount,0)-b.debtY)<0.005?out:null;};
 // Дата для плитки в шапке. Плитка складывает нехватку по всем сборам, а сроки у
 // них могут быть разные - тогда одной даты у суммы нет. Считаются только сборы,
 // у которых к сроку чего-то не хватает: сбор без долга в плитку ничего не вносит,
@@ -720,9 +760,15 @@ D.sbory.forEach(s=>{if(s.due)DUE[s.title]=s.due;});
 // первыми к нему; когда таких дат несколько, подпись честно говорит «ближайший».
 const dueDates=[...new Set(D.sbory.filter(s=>s.debtN>0&&s.due).map(s=>s.due))]
  .sort((a,b)=>parseD(a)-parseD(b));
+// Главное число долга - годовое: родитель, закрывший ближайший платёж, иначе
+// читает «к сроку 0» как «ничего не должен». Срок ушёл в подпись под суммой.
+// Порядок плиток: три про кассу, потом долг, потом свободный остаток - долг
+// родителям важнее того, сколько из кассы ещё никому не обещано.
 const tiles=[['Собрано',T.collected,''],['Потрачено',T.spent,''],['Остаток',T.rest,'rest']];
-if(T.dueNow)tiles.push(['Надо к сроку',T.dueNow,'owed',
- dueDates.length?`${dueDates.length>1?'ближайший срок ':'до '}${dm(dueDates[0])}`:'']);
+if(T.dueYear)tiles.push(['Осталось внести за год',T.dueYear,'owed',
+ T.dueNow?`из них ${rub(T.dueNow)}${dueDates.length
+   ?(dueDates.length>1?' к ближайшему сроку ':' до ')+dm(dueDates[0]):''}`
+  :'к ближайшему сроку внесено всё']);
 // «Остаток» - все деньги кассы, «Свободный остаток» - то, что из них ещё никому
 // не обещано. Плитка появляется только когда обязательства есть.
 if(T.promised)tiles.push(['Свободный остаток',T.free,'free',
@@ -741,7 +787,7 @@ const SDEF={name:1,debt:-1,rest:1};
 // по 2000 к сроку), и без него строки при равных значениях прыгали бы при перерисовке.
 const cmp=(a,b)=>{
  let r;
- if(SORT==='debt')r=(a.debtN||0)-(b.debtN||0);
+ if(SORT==='debt')r=(a.debtY||0)-(b.debtY||0)||(a.debtN||0)-(b.debtN||0);
  else if(SORT==='rest')r=(a.rest||0)-(b.rest||0);
  else r=String(a.name).localeCompare(String(b.name),'ru');
  return (r*SDIR)||((a.ord||0)-(b.ord||0));};
@@ -792,7 +838,10 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
   <div class="stats">
    <span>потрачено <b>${rub(s.spent)}</b></span>
    <span>остаток <b class="good">${rub(s.rest)}</b></span>
-   <span>не хватает к сроку${s.due?' '+dm(s.due):''} <b${s.debtN?' class="bad"':''}>${rub(s.debtN)}</b></span>
+   <!-- Долг за год стоит перед сроком и здесь: иначе вкладка «Сборы» показывала бы
+        главным то число, которое на остальной странице стало расшифровкой. -->
+   <span>должны за год <b${s.debtY?' class="bad"':''}>${rub(s.debtY)}</b></span>
+   <span>из них к сроку${s.due?' '+dm(s.due):''} <b${s.debtN?' class="bad"':''}>${rub(s.debtN)}</b></span>
   </div>
   <div class="acts">
    <button class="btn" data-toggle="pp${i}" aria-expanded="false">Участники · внесли к сроку ${done} из ${s.parts.length}<span class="chev">▾</span></button>
@@ -813,29 +862,36 @@ let KFILTER='all';
 function renderKids(f){f=(f||'').trim().toLowerCase();
  let L=OWN.filter(k=>!f||k.name.toLowerCase().includes(f));
  L=[...L].sort(cmp);
- if(KFILTER==='debt')L=L.filter(k=>k.debtN>0);
- if(KFILTER==='year')L=L.filter(k=>!k.debtN&&k.debtY>0);
- if(KFILTER==='ok')L=L.filter(k=>!k.debtN&&!k.debtY);
+ if(KFILTER==='debt')L=L.filter(k=>k.debtY>0);
+ if(KFILTER==='ok')L=L.filter(k=>!k.debtY);
  document.getElementById('kidlist').innerHTML=L.length?`<div class="rows">
   <div class="row-head"><span class="idx"></span>
-   ${sortHead('name','Ученик','nm')}${sortHead('debt','К сроку','due')}${sortHead('rest','Остаток','bal')}
+   ${sortHead('name','Ученик','nm')}${sortHead('debt','Должен за год','due')}${sortHead('rest','Не потрачено','bal')}
    <span class="chev" style="visibility:hidden">▾</span></div>
   ${L.map((k,i)=>{
   // Нехватка ребёнка сложена по всем его сборам, поэтому дата берётся не общая,
   // а самая ранняя из тех сборов, где ему к сроку не хватает.
   const kdue=k.by.filter(b=>b.debtN>0&&DUE[b.sbor]).map(b=>DUE[b.sbor])
    .sort((a,b)=>parseD(a)-parseD(b))[0];
+  // Оставшиеся платежи по всем сборам ребёнка, сведённые по датам. Сумма шагов
+  // равна «осталось за год», первый шаг - «из них к сроку»: обе цифры из шапки
+  // строки видны здесь в разбивке, а не появляются ниоткуда.
+  const steps=[];
+  k.by.forEach(b=>(planLeft(b)||[]).forEach(st=>{
+   const e=steps.find(y=>y.date===st.date);
+   if(e)e.amount+=st.amount; else steps.push({date:st.date,amount:st.amount});}));
+  steps.sort((a,b)=>parseD(a.date)-parseD(b.date));
   // data-l дублирует заголовок столбца: на узких экранах thead скрыт, и подпись
   // берётся из атрибута через ::before (см. @media max-width:560px).
   const rows=k.by.map(b=>`<tr>
     <td class="hd">${b.code?`<span class="code sm">${esc(b.code)}</span> `:''}${esc(b.sbor)}</td>
-    <td class="num" data-l="Внести к сроку">${rub(b.first)}</td>
-    <td class="num" data-l="Всего за год">${rub(b.plan)}</td>
+    <td class="num" data-l="План к сроку">${rub(b.first)}</td>
+    <td class="num" data-l="План за год">${rub(b.plan)}</td>
     <td class="num" data-l="Внесено">${rub(b.paid)}</td>
-    <td class="num" data-l="Не хватает к сроку"${b.debtN?' style="color:var(--bad);font-weight:700"':''}>${b.debtN?rub(b.debtN):'-'}</td>
-    <td class="num" data-l="Ещё за год">${b.debtY?rub(b.debtY):'-'}</td>
+    <td class="num" data-l="Должен за год"${b.debtY?' style="font-weight:700"':''}>${b.debtY?rub(b.debtY):'-'}</td>
+    <td class="num" data-l="Из них к сроку"${b.debtN?' style="color:var(--bad);font-weight:700"':''}>${b.debtN?rub(b.debtN):'-'}</td>
     <td class="num" data-l="Доля расходов">${rub(b.share)}</td>
-    <td class="num" data-l="Остаток"><b>${rub(b.rest)}</b></td></tr>`).join('')
+    <td class="num" data-l="Не потрачено"><b>${rub(b.rest)}</b></td></tr>`).join('')
    ||'<tr><td class="non" colspan="8" style="color:var(--dim)">Ни в одном сборе не участвует.</td></tr>';
   // Номер - позиция в текущем списке, а не закреплённый за ребёнком: пересчитывается
   // при каждой сортировке и фильтрации. data-k держит скрытый ключ для восстановления
@@ -843,24 +899,39 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
   return `<div class="row" data-k="${k.ord}"><div class="row-h">
     <span class="idx">${i+1}</span>
     <span class="nm">${esc(k.name)}</span>
-    <span class="due">${k.debtN?rub(k.debtN):''}</span>
+    <span class="due${k.debtN?' now':''}">${k.debtY
+      ?`<b>${rub(k.debtY)}</b><i>${k.debtN
+         ?`из них ${rub(k.debtN)}${kdue?' до '+dm(kdue):''}`
+         :'ближайший срок закрыт'}</i>`
+      :'<i class="free">долга нет</i>'}</span>
     <span class="bal${k.rest<0?' neg':''}">${rub(k.rest)}</span>
     <span class="chev">▾</span></div>
    <div class="row-b">
-    <div class="sum">Внесено <b>${rub(k.paid)}</b> · доля расходов <b>${rub(k.share)}</b>
-     · остаток <b${k.rest<0?' class="bad"':''}>${rub(k.rest)}</b>${k.debtN?`
-     · <b class="bad">${kdue?`нужно до ${dm(kdue)} - ${rub(k.debtN)}`:`нужно внести ${rub(k.debtN)}`}</b>`:(k.debtY?`
-     · ещё ${rub(k.debtY)} за год`:' · рассчитался')}</div>
+    <div class="brk">
+     <div><span>Внесено</span><b>${rub(k.paid)}</b></div>
+     <div><span>Доля расходов</span><b>${rub(k.share)}</b></div>
+     <div><span>Не потрачено из внесённого</span>
+      <b${k.rest<0?' class="bad"':''}>${rub(k.rest)}</b></div>
+     <div><span>Осталось внести за год</span>
+      <b${k.debtY?' class="bad"':''}>${rub(k.debtY)}</b></div>
+     ${k.debtY?`<div><span>${k.debtN?`Из них к ближайшему сроку${kdue?', '+dm(kdue):''}`
+       :'Ближайший срок'}</span>
+      <b${k.debtN?' class="bad"':''}>${k.debtN?rub(k.debtN):'закрыт'}</b></div>`:''}
+    </div>
+    ${steps.length?`<div class="pays"><div class="pays-h">Осталось внести по графику</div>
+      <div class="sched">${steps.map((x,si)=>
+       `<span class="st${si===0?' now':''}"><b>${dm(x.date)}</b> - ${rub(x.amount)}</span>`
+      ).join('')}</div></div>`:''}
     <div class="scroller"><table>
     <thead><tr>
      <th>Сбор</th>
-     <th class="num">Внести<br>к сроку</th>
-     <th class="num">Всего<br>за год</th>
+     <th class="num">План<br>к сроку</th>
+     <th class="num">План<br>за год</th>
      <th class="num">Внесено</th>
-     <th class="num">Не хватает<br>к сроку</th>
-     <th class="num">Ещё<br>за год</th>
+     <th class="num">Должен<br>за год</th>
+     <th class="num">Из них<br>к сроку</th>
      <th class="num">Доля<br>расходов</th>
-     <th class="num">Остаток</th></tr></thead>
+     <th class="num">Не<br>потрачено</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
     ${k.pays.length?`<div class="pays"><div class="pays-h">Платежи</div>
       ${k.pays.map(pp=>`<div class="pay"><span class="pd">${esc(pp.date)}</span>
@@ -871,9 +942,12 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
     </div></div>`;}).join('')}</div>`
   :'<div class="empty">Никого не нашли.</div>';
  const h=document.getElementById('kidhint');
- if(h)h.innerHTML=`Остаток - сколько денег ребёнка ещё не потрачено: внесено минус своя доля расходов
+ if(h)h.innerHTML=`<b>Должен за год</b> - сколько ещё осталось внести до полной суммы сбора;
+  мелким шрифтом под ним - какая часть этой суммы нужна к ближайшему сроку.
+  <b>Не потрачено</b> - деньги ребёнка, ещё не ушедшие в расходы: внесено минус своя доля
   (уже потрачено ${rub(D.t.spent)} ÷ ${OWN.length} = ${rub(D.t.spent/OWN.length)} с человека).
-  <b>Минус означает, что за ребёнка уже потрачено больше, чем он внёс.</b>`;}
+  Это не «долга нет»: долг и не потраченные деньги - разные вещи, и бывают вместе.
+  Минус означает, что за ребёнка уже потрачено больше, чем он внёс.`;}
 
 // Блок внешних плательщиков не зависит от поиска, сортировки и чипов: он собирается
 // один раз и стоит между таблицей и подписью. Без него сумма видимых остатков
@@ -885,11 +959,14 @@ document.getElementById('kidext').innerHTML=EXT.length?`<h2>Поступлени
  <div class="rows"><ul class="list pad12">${EXT.map(k=>
   `<li>${esc(k.name)}<span class="amt">${rub(k.rest)}</span></li>`).join('')}</ul></div>`:'';
 
-const cnt={all:OWN.length,debt:OWN.filter(k=>k.debtN>0).length,
- year:OWN.filter(k=>!k.debtN&&k.debtY>0).length,ok:OWN.filter(k=>!k.debtN&&!k.debtY).length};
-// Подпись фильтра совпадает с плиткой: речь про один и тот же ненаступивший платёж
-document.getElementById('chips').innerHTML=[['all','Все'],['debt','Надо к сроку'],
- ['year','Только за год'],['ok','Рассчитались']].map(([k,l])=>
+// Фильтр делит по главному вопросу - должен за год или нет. Прежние «Надо к сроку»
+// и «Только за год» делили по сроку, а он теперь вторичен: срочность видна прямо
+// в строке («из них 1 000 ₽ до 30.09» либо «ближайший срок закрыт»), и ради неё
+// больше не нужно переключать фильтр. Подпись чипа совпадает с плиткой в шапке.
+const cnt={all:OWN.length,debt:OWN.filter(k=>k.debtY>0).length,
+ ok:OWN.filter(k=>!k.debtY).length};
+document.getElementById('chips').innerHTML=[['all','Все'],['debt','Есть долг за год'],
+ ['ok','Рассчитались']].map(([k,l])=>
  `<button class="chip" data-chip="${k}" aria-pressed="${k==='all'}">${l} · ${cnt[k]}</button>`).join('');
 document.getElementById('chips').addEventListener('click',e=>{
  const c=e.target.closest('.chip'); if(!c)return;
@@ -950,11 +1027,13 @@ const EXPL={
   ['Ближайший месяц','Блок сверху показывает то, что произойдёт в течение ближайших недель, чтобы не листать календарь.'],
   ['Порядок месяцев','По учебному году, с сентября. Текущий месяц обведён рамкой, ближайшие две недели подсвечены жёлтым.']],
  sbory:[['Что такое сбор','Отдельная тема со своей суммой и своим списком участников. Кто в мероприятии не участвует, за него не платит и в его расходах не участвует.'],
-  ['График платежей','Сумма за год разбита на части с датами. Планка «надо к сроку» - нарастающий итог по этому графику: все шаги, чья дата уже наступила на дату отчёта. Отдельно объявлять новую сумму не нужно, планка поднимается сама с каждой датой графика. В самом графике ближайший шаг выделен цветом, а пройденные показаны серым; сколько не хватает к нему - в строке «не хватает к сроку» в карточке сбора, там же указана и сама дата.'],
-  ['Две суммы к разным срокам','«Не хватает к сроку» это то, что нужно внести к ближайшей дате графика - она стоит рядом с суммой, и до неё обычно ещё есть время. «Ещё за год» это остаток до полной суммы, его срок пока не наступил, и он не считается просроченным.'],
+  ['График платежей','Сумма за год разбита на части с датами. Планка «к сроку» - нарастающий итог по этому графику: все шаги, чья дата уже наступила на дату отчёта. Отдельно объявлять новую сумму не нужно, планка поднимается сама с каждой датой графика. В самом графике ближайший шаг выделен цветом, а пройденные показаны серым.'],
+  ['Долг за год и долг к сроку','Главное число - долг за год: сколько осталось внести до полной суммы. Долг к сроку - его часть, которую ждут к ближайшей дате графика; она указана рядом. Закрыть ближайший срок не значит рассчитаться: за год может остаться ещё сумма, просто её срок пока не наступил.'],
   ['Оплата частями','Каждый платёж записывается отдельно, нехватка к сроку уменьшается на внесённую сумму.']],
- kids:[['Остаток','Сколько денег ребёнка ещё не потрачено: внесено минус своя доля расходов. Расходы сбора делятся поровну между его участниками.'],
-  ['Минус в остатке','За ребёнка уже потрачено больше, чем он внёс. Это не ошибка: класс профинансировал его долю из общих денег.'],
+ kids:[['Должен за год','Сколько ребёнку осталось внести до полной суммы сбора. Мелким шрифтом под суммой - какая её часть нужна к ближайшему сроку и какого числа. Если там «ближайший срок закрыт», ближайший платёж внесён, но за год сумма ещё остаётся.'],
+  ['Не потрачено','Деньги ребёнка, которые ещё не ушли в расходы: внесено минус своя доля расходов. Расходы сбора делятся поровну между его участниками. Это не то же, что «долга нет»: можно ничего не быть должным и иметь остаток, а можно иметь остаток и долг одновременно.'],
+  ['Минус в «не потрачено»','За ребёнка уже потрачено больше, чем он внёс. Это не ошибка: класс профинансировал его долю из общих денег.'],
+  ['Что внутри строки','Нажмите на строку: там разбивка по деньгам, оставшиеся платежи по графику с датами, таблица по каждому сбору и список внесённых платежей.'],
   ['Считается по каждому сбору отдельно','Переплата по одному сбору не закрывает нехватку по другому. Нажмите на строку, чтобы увидеть разбивку по каждому сбору.'],
   ['Сортировка','Нажмите на заголовок колонки. Повторное нажатие меняет направление.'],
   ['Нашли ошибку','Если платежа нет или сумма не совпадает, напишите Ане, поправим и перевыпустим отчёт.']],
