@@ -271,11 +271,16 @@ for r in range(B_FIRST, B_LAST + 1):
                   "rest": num(sb.cell(row=r, column=16).value), "parts": parts, "spends": spends,
                   "sched": schedule(title)})
 
+# Колонка I - комментарий к взносу: откуда взялась запись. У большинства это
+# «из паровозика в родительском чате», но бывает платёж личным сообщением без чека,
+# и родителю важно видеть, на чём держится строка в его отчёте. Колонка H
+# («Подтверждение (файл)») наружу не идёт: там имя файла с фамилией ребёнка.
 for k in kids:
     k["pays"] = [{"date": dt(vz.cell(row=vr, column=2).value),
                   "sbor": vz.cell(row=vr, column=4).value or "",
                   "amount": num(vz.cell(row=vr, column=5).value),
-                  "way": vz.cell(row=vr, column=6).value or ""}
+                  "way": vz.cell(row=vr, column=6).value or "",
+                  "note": vz.cell(row=vr, column=9).value or ""}
                  for vr in range(VZ_FIRST, VZ_LAST + 1)
                  if vz.cell(row=vr, column=3).value == k["raw"] and vz.cell(row=vr, column=5).value]
 
@@ -527,6 +532,10 @@ PAGE = r"""<!DOCTYPE html>
  .pay .pd{flex:none;font-variant-numeric:tabular-nums;font-weight:600;}
  .pay .pn{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
  .pay .pa{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;}
+ /* Комментарий к платежу - откуда взялась запись. Стоит под своей строкой, а не
+    раскрывается по нажатию: платежей у ребёнка единицы, и лишний слой прятал бы
+    ровно то, ради чего комментарий заводят - платёж без чека. */
+ .pcm{font-size:11.5px;color:var(--dim);line-height:1.4;padding:0 0 5px;}
  /* Расшифровка в раскрытой строке: подпись слева, число справа. Раньше здесь
     шла одна строка через «·», но в ней стало пять величин, и главная терялась. */
  .brk{font-size:13px;padding:4px 2px 2px;}
@@ -918,7 +927,7 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
        :'Ближайший срок'}</span>
       <b${k.debtN?' class="bad"':''}>${k.debtN?rub(k.debtN):'закрыт'}</b></div>`:''}
     </div>
-    ${steps.length?`<div class="pays"><div class="pays-h">Осталось внести по графику</div>
+    ${steps.length?`<div class="pays plan"><div class="pays-h">Осталось внести по графику</div>
       <div class="sched">${steps.map((x,si)=>
        `<span class="st${si===0?' now':''}"><b>${dm(x.date)}</b> - ${rub(x.amount)}</span>`
       ).join('')}</div></div>`:''}
@@ -937,7 +946,8 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
       ${k.pays.map(pp=>`<div class="pay"><span class="pd">${esc(pp.date)}</span>
         <span class="pn">${esc(pp.sbor)}</span>
         <span class="pa">${rub(pp.amount)}</span>
-        <span class="tag">${esc(String(pp.way).toLowerCase())}</span></div>`).join('')}</div>`
+        <span class="tag">${esc(String(pp.way).toLowerCase())}</span></div>${
+        pp.note?`<div class="pcm">${esc(pp.note)}</div>`:''}`).join('')}</div>`
      :'<div class="pays"><div class="pays-h">Платежей ещё не было</div></div>'}
     </div></div>`;}).join('')}</div>`
   :'<div class="empty">Никого не нашли.</div>';
