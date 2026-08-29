@@ -437,6 +437,9 @@ PAGE = r"""<!DOCTYPE html>
  .amt{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600;}
  .amt.bad{color:var(--bad);} .amt.ok{color:var(--good);}
  .amt.soft{color:var(--dim);font-weight:400;}
+ /* Возмещение - расход со знаком минус: деньги вернулись в кассу. Красный здесь
+    читался бы как долг или ошибка, поэтому цвет тот же, что у остатка. */
+ .amt.back{color:var(--good);} .sub b.back{color:var(--good);font-weight:600;}
  .tag{font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:20px;
       padding:1px 7px;white-space:nowrap;}
  /* 16px по той же причине, что и #gpass: меньше - и Safari зумит при фокусе. */
@@ -585,6 +588,8 @@ PAGE = r"""<!DOCTYPE html>
         color:var(--accent);margin:0 0 6px 2px;text-transform:uppercase;letter-spacing:.03em;}
  .mhead span{font-weight:400;color:var(--dim);margin-left:auto;text-transform:none;
               font-variant-numeric:tabular-nums;}
+ /* Итог группы уходит в минус, если возмещение перекрыло траты этого дня. */
+ .mhead span.back{color:var(--good);font-weight:600;}
  ul.list.pad12{padding:0 12px;} .sub{color:var(--dim);font-size:12px;}
  .bd{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);
      font-size:14.5px;}
@@ -722,9 +727,12 @@ async function decryptPayload(b64, pass){
 
 function boot(D){
 
+// Минус выводится знаком U+2212, а не дефисом: toLocaleString даёт «-600», и на
+// мелком кегле дефис теряется рядом с цифрой - сумма читается как обычная трата.
+// Настоящий минус по ширине равен цифре и виден сразу.
 const rub=n=>{n=Math.round((n||0)*100)/100;const s=Number.isInteger(n)?n.toLocaleString('ru-RU'):
   n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
-  return s.replace(/ /g,' ')+' ₽';};
+  return s.replace(/ /g,' ').replace(/^-/,'−')+' ₽';};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // Склонение по числу: форма для 1, для 2-4 и для 5 и больше, с исключением на 11-14.
 const plural=(n,one,few,many)=>{const a=n%10,b=n%100;
@@ -817,7 +825,8 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
   return `<li><span class="dot ${cls}"></span><span class="idx">${pi+1}</span>${esc(p.name)}
     <span class="tag">внёс ${rub(p.paid)}</span>${right}</li>`;}).join('');
  const sp=s.spends.length?s.spends.map(e=>`<li>${e.date?`<span class="tag">${esc(e.date)}</span>`:''}
-   ${esc(e.what)}<span class="amt">${rub(e.amount)}</span>
+   ${esc(e.what)}${e.amount<0?' <span class="tag">возмещение</span>':''}
+   <span class="amt${e.amount<0?' back':''}">${rub(e.amount)}</span>
    <span class="tag">${esc(e.proof)}</span></li>`).join('')
   :'<li style="color:var(--dim)">Из этого сбора пока ничего не потрачено.</li>';
  // График платежей заменяет обе денежные метки: и «по 2 000 ₽ до 25.08», и
@@ -1052,7 +1061,8 @@ const EXPL={
   ['Подтверждения','Бумажные чеки по классу не собираются. У каждого расхода указано, чем он подтверждён: скрин оплаты, чек или только со слов.'],
   ['Привязка к сбору','Каждый расход относится к конкретному сбору и делится только между его участниками.'],
   ['Направление','Категория расхода: праздник, подарки, канцтовары и так далее. По ней видно, на что уходят деньги класса.'],
-  ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются.']]};
+  ['Строка с минусом','Возмещение: деньги вернулись в кассу - например, соседний класс возместил свою долю общей траты. Такая строка уменьшает и общие расходы, и долю каждого ребёнка поровну. Это не долг и не ошибка: денег в кассе стало больше, а не меньше.'],
+  ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются - в группе с возмещением итог может оказаться меньше отдельной траты или уйти в минус.']]};
 for(const [k,items] of Object.entries(EXPL)){
  const el=document.getElementById('ex-'+k); if(!el)continue;
  el.innerHTML=`<button class="btn wide" data-toggle="exp-${k}" aria-expanded="false">Как это считается<span class="chev">▾</span></button>
@@ -1078,9 +1088,12 @@ function renderSpends(){
  if(!D.spends.length){el.innerHTML=promHtml+'<div class="empty">Пока не потрачено ни рубля.</div>';return;}
  const key=e=>SGROUP==='date'?e.date:(SGROUP==='cat'?e.cat:e.sbor);
  const order=[...D.spends];
- if(SGROUP==='date')order.sort((a,b)=>{
-  const p=s=>s.split('.').reverse().join(''); return p(b.date).localeCompare(p(a.date));});
- else order.sort((a,b)=>key(a).localeCompare(key(b))||a.date.localeCompare(b.date));
+ // Дата сравнивается как ГГГГММДД, а не строкой «ДД.ММ.ГГГГ»: посимвольно первым
+ // идёт день, и 01.09 встало бы раньше 31.08. Внутри групп по направлению и по
+ // сбору ключ тот же - иначе на переходе через месяц порядок бы поехал.
+ const dkey=s=>s.split('.').reverse().join('');
+ if(SGROUP==='date')order.sort((a,b)=>dkey(b.date).localeCompare(dkey(a.date)));
+ else order.sort((a,b)=>key(a).localeCompare(key(b))||dkey(a.date).localeCompare(dkey(b.date)));
  const gs=[];
  order.forEach(e=>{let g=gs[gs.length-1];
   if(!g||g.k!==key(e)){g={k:key(e),items:[],sum:0};gs.push(g);}
@@ -1091,11 +1104,13 @@ function renderSpends(){
  // обязательство. Без комментария тела нет, и строка не раскрывается.
  el.innerHTML=promHtml+`<div class="chips" id="sgroup">${chips}</div>
   ${gs.map(g=>`<div class="mgroup">
-   <div class="mhead">${esc(g.k)}<span>${rub(g.sum)}</span></div>
+   <div class="mhead">${esc(g.k)}<span${g.sum<0?' class="back"':''}>${rub(g.sum)}</span></div>
    <div class="rows">${g.items.map(e=>`<div class="row${e.comment?'':' nc'}"><div class="row-h">
      ${SGROUP!=='date'?`<span class="tag">${esc(e.date)}</span>`:''}
-     <span class="pm">${esc(e.what)}${SGROUP!=='cat'?`<span class="sub">${esc(e.cat)}</span>`:''}</span>
-     <span class="amt">${rub(e.amount)}</span><span class="tag">${esc(e.proof)}</span>
+     <span class="pm">${esc(e.what)}${(()=>{const t=[SGROUP!=='cat'?esc(e.cat):'',
+       e.amount<0?'<b class="back">возмещение</b>':''].filter(Boolean);
+       return t.length?`<span class="sub">${t.join(' · ')}</span>`:'';})()}</span>
+     <span class="amt${e.amount<0?' back':''}">${rub(e.amount)}</span><span class="tag">${esc(e.proof)}</span>
      <span class="chev"${e.comment?'':' style="visibility:hidden"'}>▾</span></div>
     ${e.comment?`<div class="row-b"><div class="sum">${esc(e.comment)}</div></div>`:''}</div>`).join('')}
    </div></div>`).join('')}`;
