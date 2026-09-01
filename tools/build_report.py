@@ -91,6 +91,11 @@ gr = wb["График"]
 # Обещанное, но не оплаченное. Лист появился позже остальных, поэтому его
 # отсутствие - не ошибка: у прошлогоднего журнала его просто нет.
 ob = wb["Обязательства"] if "Обязательства" in wb.sheetnames else None
+# Планируемые события класса. Деньги за них идут мимо кассы - родитель платит
+# организатору напрямую, - поэтому лист не участвует ни в одном расчёте: ни в
+# поступлениях, ни в расходах, ни в долях, ни в долгах. На страницу он выходит
+# только календарём. Лист появился позже остальных, его отсутствие - не ошибка.
+ev = wb["События"] if "События" in wb.sheetnames else None
 
 # Границы данных не записаны числами: их читает journal.bounds() из самого журнала -
 # по шапке сверху и по строке «ИТОГО…» снизу. Класс растёт посреди года, под списки
@@ -102,6 +107,9 @@ GR_FIRST, GR_LAST = journal.bounds(gr, "Сбор")
 VZ_FIRST, VZ_LAST = journal.bounds(vz, "Дата")
 RS_FIRST, RS_LAST = journal.bounds(rs, "Дата")
 OB_FIRST, OB_LAST = journal.bounds(ob, "Срок") if ob is not None else (0, -1)
+# У «Событий» строки «ИТОГО» нет: суммы там с одного участника и в одну сумму не
+# складываются. Нижняя граница - конец листа, см. journal.bounds_open().
+EV_FIRST, EV_LAST = journal.bounds_open(ev, "Дата") if ev is not None else (0, -1)
 # Колонка ребёнка в матрицах выводится из номера его строки, поэтому matrix_col
 # заодно сверяет имена в шапках со списком: разъехавшись, они выдали бы детям
 # чужие долги, и отчёт всё равно собрался бы.
@@ -202,6 +210,34 @@ if ob is not None:
                          "who": ob.cell(row=r, column=6).value or "",
                          "note": ob.cell(row=r, column=7).value or ""})
     promises.sort(key=lambda x: x["date"].split(".")[::-1])
+
+
+# Планируемые события: B дата, C что, D сумма с участника, E кто организует,
+# F комментарий. Заполненной считается строка с датой и названием: сумма бывает
+# пустой (событие объявлено, цену ещё не назвали), и такую строку в календаре
+# показать всё равно надо - без суммы в заголовке.
+#
+# Пояснение к событию собирается здесь, а не в вёрстке: последней частью всегда
+# идёт «оплата напрямую…». Родитель, увидевший в календаре сумму, первым делом
+# думает «сдавать в кассу»; эта строка отвечает на вопрос до того, как он его
+# задаст, и не зависит от того, заполнены ли организатор с комментарием.
+plans = []
+for r in range(EV_FIRST, EV_LAST + 1):
+    date, what = dt(ev.cell(row=r, column=2).value), ev.cell(row=r, column=3).value
+    if not date or not what:
+        continue
+    amount = ev.cell(row=r, column=4).value
+    who = str(ev.cell(row=r, column=5).value or "").strip()
+    comment = str(ev.cell(row=r, column=6).value or "").strip()
+    title = str(what).strip()
+    if isinstance(amount, (int, float)) and amount:
+        title += f" - {money(amount)} ₽ с человека"
+    note = " · ".join([p for p in (f"Организует: {who}" if who else "",
+                                        comment.rstrip(". "),
+                                        "Оплата напрямую организатору, в кассу класса "
+                                        "эти деньги не идут") if p])
+    plans.append({"date": date, "kind": "plan", "title": title, "note": note})
+plans.sort(key=lambda x: x["date"].split(".")[::-1])
 
 
 kids = []
@@ -312,6 +348,9 @@ for s in sbory:
     if s["event"]:
         EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
                        "title": s["title"]})
+# Планируемые события идут в тот же календарь, но своей меткой: «срок» - это
+# деньги в кассу, «платят сами» - деньги мимо неё. На расчёты не влияют.
+EVENTS += plans
 DATA = json.dumps({"t": totals, "events": EVENTS, "sbory": sbory,
                    "spends": all_spends, "promises": promises,
                    "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
@@ -560,7 +599,14 @@ PAGE = r"""<!DOCTYPE html>
             letter-spacing:.05em;font-weight:700;margin-bottom:6px;}
  .hero-i{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:14.5px;flex-wrap:wrap;}
  .hero-i b{white-space:nowrap;} .hero-i .in{margin-left:auto;font-size:12.5px;color:var(--warn);}
+ .asof{margin:10px 2px 16px;font-size:12.5px;line-height:1.45;color:var(--dim);}
+ .asof b{color:var(--ink);white-space:nowrap;}
  .hero.none{border-color:var(--line);color:var(--dim);font-size:14px;}
+ /* Пояснение к событию мимо кассы. flex-basis:100% переносит его на свою строку
+    целиком: в клетке месяца текст обрезан по ширине, и «Ближайший месяц» -
+    единственное место, где он читается без наведения мышью (на телефоне его нет). */
+ .hero-i .pn{flex-basis:100%;font-style:normal;font-size:12.5px;color:var(--dim);
+             line-height:1.4;margin:1px 0 2px;}
  /* minmax(0,1fr), а не 1fr: у 1fr минимум - min-content, и длинное название события
     («Полная сумма 5000 ₽ - Учебный год 2026/2027») растягивало колонку шире экрана. */
  .cal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
@@ -579,9 +625,13 @@ PAGE = r"""<!DOCTYPE html>
  .m li i{font-style:normal;color:var(--dim);font-size:11px;}
  .m li.l-due b,.m li.l-due span{color:var(--bad);} .m li.l-due{font-weight:600;}
  .m li.l-event b,.m li.l-event span{color:var(--accent);}
+ /* Событие мимо кассы - зелёным: красный уже занят сроком платежа, синий -
+    мероприятием сбора, и третьей денежной строке нельзя читаться как первые две. */
+ .m li.l-plan b,.m li.l-plan span{color:var(--good);}
  .k{font-size:10px;text-transform:uppercase;letter-spacing:.03em;border-radius:20px;
     padding:1px 7px;border:1px solid var(--line);color:var(--dim);}
  .k-due{color:var(--bad);border-color:#f3c9c6;} .k-event{color:var(--accent);border-color:#c9d6ee;}
+ .k-plan{color:var(--good);border-color:#bcdcd8;}
  .m .none{color:#c9ced7;font-size:12.5px;}
  .mgroup{margin-bottom:12px;}
  .mhead{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;
@@ -682,6 +732,14 @@ PAGE = r"""<!DOCTYPE html>
   </div>
  </header>
  <div class="tiles" id="tiles"></div>
+ <!-- Дата денег стоит вплотную к плиткам, а не только в подписи под заголовком:
+      именно здесь родитель читает остаток и именно здесь может решить, что тот
+      живой. Календарь ниже считает дни от настоящего сегодня, поэтому сказано
+      прямо, что деньгам это не касается. -->
+ <p class="asof">Деньги посчитаны на <b>__ASOF__</b> - это день сборки отчёта.
+  Взносы и траты после этой даты в суммы не вошли: чтобы они появились, отчёт
+  пересобирают. Календарь событий и дней рождения ниже - живой, он считает дни
+  от сегодняшнего дня.</p>
  <span id="navtop"></span>
  <nav role="tablist">
   <button role="tab" data-tab="bdays" aria-selected="true">События</button>
@@ -738,8 +796,22 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 const plural=(n,one,few,many)=>{const a=n%10,b=n%100;
  return b>=11&&b<=14?many:(a===1?one:(a>=2&&a<=4?few:many));};
 const T=D.t;
-// Дата отчёта: точка отсчёта и для графика платежей, и для календаря ниже.
-const TODAY=new Date(__YEAR__,__MONTH__-1,__DAY__);
+// На странице два разных «сегодня», и путать их нельзя.
+//
+// ASOF - дата сборки. Всё денежное считается на неё и только на неё: остаток,
+// долги, доли, «ждём к сроку», подсветка шагов графика. Живой её делать нельзя -
+// страница не знает ни одного платежа, прошедшего после сборки, и назавтра сама
+// объявила бы должником того, кто уже заплатил.
+//
+// NOW - настоящее сегодня в браузере, с обнулённым временем суток. Уходит только
+// в календарь: обратный отсчёт до дня рождения, «Ближайший месяц», рамка текущего
+// месяца, жёлтая подсветка. Эти вещи от денег не зависят, и ради них страницу
+// больше не надо пересобирать.
+const ASOF=new Date(__YEAR__,__MONTH__-1,__DAY__);
+// Полночь по часам читателя. Отсчёт ведётся между полуночями, поэтому считаются
+// календарные дни, а не сутки по 24 часа: в поясе с переводом стрелок разница
+// выходит 23 или 25 часов, и Math.round ниже возвращает целое число дней.
+const NOW=(()=>{const n=new Date();n.setHours(0,0,0,0);return n;})();
 const parseD=s=>{const [d,m,y]=String(s).split('.').map(Number);return new Date(y,m-1,d);};
 // Дата ближайшего срока нигде не пишется строкой: планка едет с каждым шагом
 // графика, и через месяц вместо 30.09 там 31.10. Берётся due сбора - то самое
@@ -833,9 +905,9 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
  // «всего 5 000 ₽ до 30.11» - оба факта видны в самих шагах. Без графика
  // (сбора нет на листе «График») метки остаются как раньше.
  const sc=s.sched||[];
- const nextI=sc.findIndex(x=>parseD(x.date)>=TODAY);
+ const nextI=sc.findIndex(x=>parseD(x.date)>=ASOF);
  const schedHtml=sc.length?`<div class="sched">${sc.map((x,i)=>{
-   const cls=i===nextI?'now':(parseD(x.date)<TODAY?'past':'');
+   const cls=i===nextI?'now':(parseD(x.date)<ASOF?'past':'');
    return `<span class="st ${cls}"><b>${esc(x.date.slice(0,5))}</b> - ${rub(x.amount)}</span>`;
   }).join('')}</div>`:'';
  const meta=[`${s.n} ${plural(s.n,'участник','участника','участников')}`];
@@ -998,15 +1070,15 @@ document.getElementById('q').addEventListener('input',e=>renderKids(e.target.val
 // дни рождения
 const bd=D.kids.filter(k=>k.bday).map(k=>{
  const [d,m]=k.bday.split('.').map(Number);
- let y=TODAY.getFullYear(), next=new Date(y,m-1,d);
- if(next<TODAY)next=new Date(y+1,m-1,d);
- return {name:k.name,role:k.teach,date:k.bday,in:Math.round((next-TODAY)/86400000)};});
+ let y=NOW.getFullYear(), next=new Date(y,m-1,d);
+ if(next<NOW)next=new Date(y+1,m-1,d);
+ return {name:k.name,role:k.teach,date:k.bday,in:Math.round((next-NOW)/86400000)};});
 bd.sort((a,b)=>a.in-b.in);
 const MONT=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август',
  'Сентябрь','Октябрь','Ноябрь','Декабрь'];
-const curM=TODAY.getMonth();
-const daysTo=(d,m)=>{let y=TODAY.getFullYear(),n=new Date(y,m-1,d);
- if(n<TODAY)n=new Date(y+1,m-1,d);return {in:Math.round((n-TODAY)/86400000),y:n.getFullYear()};};
+const curM=NOW.getMonth();
+const daysTo=(d,m)=>{let y=NOW.getFullYear(),n=new Date(y,m-1,d);
+ if(n<NOW)n=new Date(y+1,m-1,d);return {in:Math.round((n-NOW)/86400000),y:n.getFullYear()};};
 const ALL=[];
 bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
  // Имя в клетке календаря больше не сокращается: сокращённая форма вернула бы
@@ -1014,9 +1086,11 @@ bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
  // обрезается многоточием средствами CSS (.m li span), а не логикой.
  ALL.push({kind:b.role?'teacher':'bd',d:d,m:m,in:r.in,name:b.name});});
 (D.events||[]).forEach(e=>{const [d,m]=e.date.split('.').map(Number);const r=daysTo(d,m);
- ALL.push({kind:e.kind,d:d,m:m,in:r.in,name:e.title,code:e.code});});
+ ALL.push({kind:e.kind,d:d,m:m,in:r.in,name:e.title,code:e.code,note:e.note||''});});
 ALL.sort((a,b)=>a.in-b.in);
-const KIND={bd:'др',teacher:'др',due:'срок',event:'событие'};
+// «срок» - деньги в кассу, «платят сами» - мимо неё, родитель отдаёт их напрямую
+// организатору. Подпись «событие» занята мероприятием сбора, оно оплачено кассой.
+const KIND={bd:'др',teacher:'др',due:'срок',event:'событие',plan:'платят сами'};
 const dd=n=>String(n).padStart(2,'0');
 const yr=n=>{const a=n%10,b=n%100;
  if(b>=11&&b<=14)return n+' лет'; if(a===1)return n+' год';
@@ -1029,13 +1103,15 @@ document.getElementById('pane-bdays').innerHTML=ALL.length?`
  ${soonList.length?`<div class="hero"><span class="lab">Ближайший месяц</span>
    ${soonList.map(e=>`<div class="hero-i"><b>${dd(e.d)}.${dd(e.m)}</b>
      <span class="k k-${e.kind}">${KIND[e.kind]}</span> ${esc(e.name)}
-     <span class="in">${e.in===0?'сегодня':(e.in===1?'завтра':'через '+e.in+' дн.')}</span></div>`).join('')}
+     <span class="in">${e.in===0?'сегодня':(e.in===1?'завтра':'через '+e.in+' дн.')}</span>
+     ${e.note?`<i class="pn">${esc(e.note)}</i>`:''}</div>`).join('')}
   </div>`:'<div class="hero none">В ближайший месяц событий нет.</div>'}
  <div class="cal">${order.map(m=>{
    const items=byMonth[m]||[];
    return `<div class="m${m===curM?' cur':''}${items.length?'':' mt'}">
     <h4>${MONT[m]}</h4>
-    ${items.length?`<ul>${items.map(e=>`<li class="${e.in<=14?'soon':''} l-${e.kind}">
+    ${items.length?`<ul>${items.map(e=>`<li class="${e.in<=14?'soon':''} l-${e.kind}"${
+      e.note?` title="${esc(e.note)}"`:''}>
       <b>${dd(e.d)}</b><span>${esc(e.name)}</span></li>`).join('')}</ul>`
      :'<div class="none">-</div>'}</div>`;}).join('')}</div>`
  :'<div class="empty">Событий нет.</div>';
@@ -1044,6 +1120,8 @@ document.getElementById('pane-bdays').innerHTML=ALL.length?`
 const EXPL={
  bdays:[['Что в календаре','Даты платежей по графику сбора, дни рождения детей и учителя, даты мероприятий. Всё из журнала, вручную ничего не вносится.'],
   ['Ближайший месяц','Блок сверху показывает то, что произойдёт в течение ближайших недель, чтобы не листать календарь.'],
+  ['Дни считаются от сегодня','«Через сколько дней» и подсветка ближайших двух недель берутся от настоящего сегодняшнего дня, а не от даты сборки: открыв ту же страницу через неделю, вы увидите обновившийся отсчёт. Деньги так не умеют - остаток, долги и доли посчитаны на дату отчёта, она указана под итогами.'],
+  ['Планируемые события','Съёмки, экскурсии и прочее, что класс оплачивает мимо кассы: помечены «платят сами» и зелёным. Родители платят организатору напрямую, в кассу эти деньги не идут, на остаток и долю расходов не влияют, и долгом за такое событие никто не становится. Сумма в заголовке - цена с одного человека.'],
   ['Порядок месяцев','По учебному году, с сентября. Текущий месяц обведён рамкой, ближайшие две недели подсвечены жёлтым.']],
  sbory:[['Что такое сбор','Отдельная тема со своей суммой и своим списком участников. Кто в мероприятии не участвует, за него не платит и в его расходах не участвует.'],
   ['График платежей','Сумма за год разбита на части с датами. Планка «к сроку» - нарастающий итог по этому графику: все шаги, чья дата уже наступила на дату отчёта. Отдельно объявлять новую сумму не нужно, планка поднимается сама с каждой датой графика. В самом графике ближайший шаг выделен цветом, а пройденные показаны серым.'],
