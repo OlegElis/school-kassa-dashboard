@@ -96,6 +96,11 @@ ob = wb["Обязательства"] if "Обязательства" in wb.shee
 # поступлениях, ни в расходах, ни в долях, ни в долгах. На страницу он выходит
 # только календарём. Лист появился позже остальных, его отсутствие - не ошибка.
 ev = wb["События"] if "События" in wb.sheetnames else None
+# Личные списания: часть уже сделанного расхода, адресованная конкретному ребёнку.
+# Сама трата целиком лежит в «Расходах» и входит в «потрачено» - этот лист её не
+# добавляет, а только делит иначе: не поровну на класс, а на того, кому вещь
+# досталась. Лист появился позже остальных, его отсутствие - не ошибка.
+ls = wb["Личные списания"] if "Личные списания" in wb.sheetnames else None
 
 # Границы данных не записаны числами: их читает journal.bounds() из самого журнала -
 # по шапке сверху и по строке «ИТОГО…» снизу. Класс растёт посреди года, под списки
@@ -110,6 +115,9 @@ OB_FIRST, OB_LAST = journal.bounds(ob, "Срок") if ob is not None else (0, -1
 # У «Событий» строки «ИТОГО» нет: суммы там с одного участника и в одну сумму не
 # складываются. Нижняя граница - конец листа, см. journal.bounds_open().
 EV_FIRST, EV_LAST = journal.bounds_open(ev, "Дата") if ev is not None else (0, -1)
+# У «Личных списаний» строка «ИТОГО списано лично» есть - границы читаются обычным
+# bounds(). Пустой лист даёт пустой диапазон, и на странице не появляется ничего.
+LS_FIRST, LS_LAST = journal.bounds(ls, "Дата") if ls is not None else (0, -1)
 # Колонка ребёнка в матрицах выводится из номера его строки, поэтому matrix_col
 # заодно сверяет имена в шапках со списком: разъехавшись, они выдали бы детям
 # чужие долги, и отчёт всё равно собрался бы.
@@ -217,10 +225,17 @@ if ob is not None:
 # пустой (событие объявлено, цену ещё не назвали), и такую строку в календаре
 # показать всё равно надо - без суммы в заголовке.
 #
-# Пояснение к событию собирается здесь, а не в вёрстке: последней частью всегда
-# идёт «оплата напрямую…». Родитель, увидевший в календаре сумму, первым делом
-# думает «сдавать в кассу»; эта строка отвечает на вопрос до того, как он его
-# задаст, и не зависит от того, заполнены ли организатор с комментарием.
+# Цена держится отдельным полем, а не приклеена к названию: в клетке месяца она
+# идёт одной строкой с ним, а в «Ближайшем месяце» уходит вниз, к пояснению.
+# Склеенный заголовок «Фотографирование класса - 650 ₽ с человека» разгонял
+# карточку на телефоне в четыре строки, ломая ритм списка.
+#
+# Пояснение от кода («оплата напрямую…») дописывается ТОЛЬКО если про кассу
+# ничего не сказано в комментарии журнала. Казначей обычно пишет это сам, и тогда
+# две одинаковые фразы подряд читаются как машинная приписка - доверия к странице
+# они не добавляют. Совсем убрать пояснение нельзя: метка «платят сами» стоит
+# рядом с суммой, а сумма в календаре читается как «сдать в кассу», и этот вопрос
+# нельзя оставлять на то, заполнила ли казначей нужную ячейку.
 plans = []
 for r in range(EV_FIRST, EV_LAST + 1):
     date, what = dt(ev.cell(row=r, column=2).value), ev.cell(row=r, column=3).value
@@ -229,14 +244,13 @@ for r in range(EV_FIRST, EV_LAST + 1):
     amount = ev.cell(row=r, column=4).value
     who = str(ev.cell(row=r, column=5).value or "").strip()
     comment = str(ev.cell(row=r, column=6).value or "").strip()
-    title = str(what).strip()
-    if isinstance(amount, (int, float)) and amount:
-        title += f" - {money(amount)} ₽ с человека"
-    note = " · ".join([p for p in (f"Организует: {who}" if who else "",
-                                        comment.rstrip(". "),
-                                        "Оплата напрямую организатору, в кассу класса "
-                                        "эти деньги не идут") if p])
-    plans.append({"date": date, "kind": "plan", "title": title, "note": note})
+    parts = [f"Организует: {who}" if who else "", comment.rstrip(". ")]
+    if "касс" not in comment.lower():
+        parts.append("Оплата напрямую организатору, в кассу класса эти деньги не идут")
+    plans.append({"date": date, "kind": "plan", "title": str(what).strip(),
+                  "amt": (f"{money(amount)} ₽ с человека"
+                          if isinstance(amount, (int, float)) and amount else ""),
+                  "note": " · ".join([p for p in parts if p])})
 plans.sort(key=lambda x: x["date"].split(".")[::-1])
 
 
@@ -268,7 +282,41 @@ for r in range(S_FIRST, S_LAST + 1):
                  "share": num(uch.cell(row=r, column=9).value),
                  "rest": num(uch.cell(row=r, column=10).value),
                  "bday": bday(uch.cell(row=r, column=11).value),
+                 # Личные списания ребёнка - заполняются ниже, с листа
+                 # «Личные списания»; у большинства детей список пустой.
+                 "own": [], "ownSum": 0,
                  "by": []})
+
+# Личные списания: B дата, C сбор, D ребёнок, E за что, F сумма, G подтверждение,
+# H комментарий. Заполненной считается строка, где есть и ребёнок, и сумма -
+# остальное бывает пустым, а без этих двух полей адресовать нечего и некому.
+#
+# Имя сверяется со списком «Учеников» и незнакомое останавливает сборку. Тихо
+# пропущенная строка - это ровно тот случай, ради которого лист и заведён: доля
+# в журнале уже посчитана с личным списанием, а на странице его бы не было, и
+# родитель увидел бы долю, которая ниоткуда не складывается.
+_by_name = {k["raw"]: k for k in kids}
+for r in range(LS_FIRST, LS_LAST + 1):
+    who = str(ls.cell(row=r, column=4).value or "").strip()
+    amount = num(ls.cell(row=r, column=6).value)
+    if not who or not amount:
+        continue
+    k = _by_name.get(who)
+    if k is None:
+        raise SystemExit(
+            f"СБОРКА ОСТАНОВЛЕНА: на листе «Личные списания» в строке {r} стоит «{who}», "
+            "а в списке «Ученики» такого имени нет.\n"
+            "Имя ребёнка должно совпадать со списком слово в слово - иначе списание "
+            "не к кому отнести, а доля расходов в журнале его уже учитывает.")
+    k["own"].append({"date": dt(ls.cell(row=r, column=2).value),
+                     "sbor": str(ls.cell(row=r, column=3).value or "").strip(),
+                     "what": ls.cell(row=r, column=5).value or "",
+                     "amount": amount,
+                     "proof": str(ls.cell(row=r, column=7).value or "со слов").lower(),
+                     "note": ls.cell(row=r, column=8).value or ""})
+for k in kids:
+    k["own"].sort(key=lambda x: x["date"].split(".")[::-1])
+    k["ownSum"] = sum(o["amount"] for o in k["own"])
 
 sbory = []
 for r in range(B_FIRST, B_LAST + 1):
@@ -276,6 +324,9 @@ for r in range(B_FIRST, B_LAST + 1):
     if not title:
         continue
     per, first = num(sb.cell(row=r, column=4).value), num(sb.cell(row=r, column=5).value)
+    # Колонка O - расход на участника: общая часть, делённая поровну. Личные
+    # списания в неё не входят, они добавляются каждому ребёнку своим числом,
+    # иначе доля в таблице сбора разошлась бы с долей из «Учеников».
     share = num(sb.cell(row=r, column=15).value)
     parts = []
     for k in kids:
@@ -285,11 +336,16 @@ for r in range(B_FIRST, B_LAST + 1):
                 if vz.cell(row=vr, column=3).value == k["raw"]
                 and vz.cell(row=vr, column=4).value == title)
         dy, dn = num(dgy.cell(row=r, column=k["col"]).value), num(dgs.cell(row=r, column=k["col"]).value)
+        own = sum(o["amount"] for o in k["own"] if o["sbor"] == title)
+        sh = share + own
         parts.append({"ord": k["ord"], "name": k["name"], "paid": p,
-                      "debtY": dy, "debtN": dn, "rest": p - share})
+                      "debtY": dy, "debtN": dn, "rest": p - sh})
         k["by"].append({"sbor": title, "code": sb.cell(row=r, column=2).value or "",
                         "plan": per, "first": first, "paid": p,
-                        "debtY": dy, "debtN": dn, "share": share, "rest": p - share})
+                        "debtY": dy, "debtN": dn,
+                        # base - общая часть, own - адресная; share - то, что
+                        # ребёнок в этом сборе стоил классу, сумма обеих.
+                        "base": share, "own": own, "share": sh, "rest": p - sh})
     spends = [{"date": dt(rs.cell(row=e, column=2).value), "what": rs.cell(row=e, column=4).value or "",
                "amount": num(rs.cell(row=e, column=6).value),
                "proof": str(rs.cell(row=e, column=9).value or "со слов").lower()}
@@ -306,6 +362,30 @@ for r in range(B_FIRST, B_LAST + 1):
                   "spent": num(sb.cell(row=r, column=14).value),
                   "rest": num(sb.cell(row=r, column=16).value), "parts": parts, "spends": spends,
                   "sched": schedule(title)})
+
+# Личное списание, привязанное к сбору, в котором ребёнок не участвует (или к сбору
+# с другим названием), не попало бы ни в одну строку таблицы: доля ребёнка в шапке
+# карточки была бы одна, а расшифровка под ней - другая. Такое молча не проходит.
+for k in kids:
+    placed = sum(b["own"] for b in k["by"])
+    if abs(placed - k["ownSum"]) > 0.005:
+        lost = sorted({o["sbor"] or "(сбор не указан)" for o in k["own"]}
+                      - {b["sbor"] for b in k["by"]})
+        raise SystemExit(
+            f"СБОРКА ОСТАНОВЛЕНА: личные списания «{k['raw']}» не разложились по сборам "
+            f"({placed:.2f} из {k['ownSum']:.2f}).\n"
+            f"Проверьте колонку C листа «Личные списания»: {', '.join(lost) or 'название сбора'} - "
+            "такого сбора у ребёнка нет (лист «Участие»).")
+    # Доля из журнала (колонка I «Учеников») уже включает личные списания. Если она
+    # разошлась с суммой долей по сборам, на странице встретятся два разных ответа
+    # на один вопрос - в шапке карточки одно число, в таблице под ней другое.
+    if abs(sum(b["share"] for b in k["by"]) - k["share"]) > 0.005:
+        raise SystemExit(
+            f"СБОРКА ОСТАНОВЛЕНА: у «{k['raw']}» доля расходов из «Учеников» "
+            f"({k['share']:.2f}) не сходится с суммой долей по сборам "
+            f"({sum(b['share'] for b in k['by']):.2f}).\n"
+            "Колонка I «Учеников» обязана равняться сумме «расход на участника» по его "
+            "сборам плюс его личные списания.")
 
 # Колонка I - комментарий к взносу: откуда взялась запись. У большинства это
 # «из паровозика в родительском чате», но бывает платёж личным сообщением без чека,
@@ -578,6 +658,15 @@ PAGE = r"""<!DOCTYPE html>
     раскрывается по нажатию: платежей у ребёнка единицы, и лишний слой прятал бы
     ровно то, ради чего комментарий заводят - платёж без чека. */
  .pcm{font-size:11.5px;color:var(--dim);line-height:1.4;padding:0 0 5px;}
+ /* Итог расшифровки доли расходов: та же цифра, что в шапке разбивки выше,
+    поэтому она отбита чертой и не бледная - две одинаковые суммы обязаны
+    читаться как одна и та же, а не как ещё одно число. */
+ .pay.tot{border-top:1px solid var(--line);margin-top:3px;padding-top:5px;}
+ .pay.tot .pn{color:var(--ink);font-weight:600;}
+ /* «За что» переносится, а не обрезается многоточием, как название сбора в
+    платежах: в платежах сбор один на всю строку и угадывается с первых слов,
+    а здесь это единственное место, где написано, что именно ребёнку досталось. */
+ .own .pay .pn{white-space:normal;overflow:visible;}
  /* Расшифровка в раскрытой строке: подпись слева, число справа. Раньше здесь
     шла одна строка через «·», но в ней стало пять величин, и главная терялась. */
  .brk{font-size:13px;padding:4px 2px 2px;}
@@ -597,16 +686,38 @@ PAGE = r"""<!DOCTYPE html>
         margin-bottom:14px;}
  .hero .lab{display:block;font-size:10.5px;color:var(--warn);text-transform:uppercase;
             letter-spacing:.05em;font-weight:700;margin-bottom:6px;}
- .hero-i{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:14.5px;flex-wrap:wrap;}
- .hero-i b{white-space:nowrap;} .hero-i .in{margin-left:auto;font-size:12.5px;color:var(--warn);}
+ /* Карточка «Ближайшего месяца» - текстовый блок, а не флекс-строка. Во флексе
+    заголовок был отдельной колонкой между меткой и отсчётом: длинный
+    («Фотографирование класса», «Внести 1 000 ₽ - Учебный год 2026/2027») не
+    помещался, уезжал на свою строку целиком и уводил за собой отсчёт - на 390 px
+    карточка планируемого события занимала четыре строки против одной у дня
+    рождения, и список терял ритм. В блоке заголовок переносится по словам во всю
+    ширину карточки, и ни одна запись не выходит за две строки. */
+ .hero-i{padding:4px 0;font-size:14.5px;}
+ .hero-i b{white-space:nowrap;}
+ /* Отсчёт прижат вправо плавающим блоком - во флексе это делал margin-left:auto.
+    padding-top выравнивает его по строке: плавающий блок встаёт по верху строки,
+    а не по базовой линии, и более мелкий шрифт иначе висит выше заголовка. */
+ .hero-i .in{float:right;margin-left:8px;padding-top:3px;
+             font-size:12.5px;color:var(--warn);}
  .asof{margin:10px 2px 16px;font-size:12.5px;line-height:1.45;color:var(--dim);}
  .asof b{color:var(--ink);white-space:nowrap;}
  .hero.none{border-color:var(--line);color:var(--dim);font-size:14px;}
- /* Пояснение к событию мимо кассы. flex-basis:100% переносит его на свою строку
-    целиком: в клетке месяца текст обрезан по ширине, и «Ближайший месяц» -
-    единственное место, где он читается без наведения мышью (на телефоне его нет). */
- .hero-i .pn{flex-basis:100%;font-style:normal;font-size:12.5px;color:var(--dim);
+ /* Пояснение к событию мимо кассы идёт своей строкой под заголовком: в клетке
+    месяца текст обрезан по ширине, и «Ближайший месяц» - единственное место,
+    где он читается без наведения мышью (на телефоне его нет). */
+ .hero-i .pn{display:block;font-style:normal;font-size:12.5px;color:var(--dim);
              line-height:1.4;margin:1px 0 2px;}
+ /* Комментарий из журнала бывает в пять строк - свёрнутый он занимает одну,
+    многоточие от line-clamp служит и подсказкой, что текст продолжается.
+    Нажатие снимает класс и показывает его целиком: тултипа на телефоне нет,
+    а это единственное место, где комментарий читается. */
+ .hero-i.clip .pn{display:-webkit-box;-webkit-box-orient:vertical;
+                  -webkit-line-clamp:1;line-clamp:1;overflow:hidden;}
+ .hero-i.more{cursor:pointer;}
+ /* Цена с человека - в начале той же строки, что пояснение, и тёмная: это то,
+    что родителю нужно знать до текста, и в свёрнутой строке она видна первой. */
+ .hero-i .pn b{color:var(--ink);font-weight:600;white-space:nowrap;}
  /* minmax(0,1fr), а не 1fr: у 1fr минимум - min-content, и длинное название события
     («Полная сумма 5000 ₽ - Учебный год 2026/2027») растягивало колонку шире экрана. */
  .cal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
@@ -807,7 +918,7 @@ const T=D.t;
 // в календарь: обратный отсчёт до дня рождения, «Ближайший месяц», рамка текущего
 // месяца, жёлтая подсветка. Эти вещи от денег не зависят, и ради них страницу
 // больше не надо пересобирать.
-const ASOF=new Date(__YEAR__,__MONTH__-1,__DAY__);
+const ASOF=new Date(__YEAR__,__MONTH__-1,__DAY__), ASOFTXT='__ASOF__';
 // Полночь по часам читателя. Отсчёт ведётся между полуночями, поэтому считаются
 // календарные дни, а не сутки по 24 часа: в поясе с переводом стрелок разница
 // выходит 23 или 25 часов, и Math.round ниже возвращает целое число дней.
@@ -853,11 +964,21 @@ const dueDates=[...new Set(D.sbory.filter(s=>s.debtN>0&&s.due).map(s=>s.due))]
 // читает «к сроку 0» как «ничего не должен». Срок ушёл в подпись под суммой.
 // Порядок плиток: три про кассу, потом долг, потом свободный остаток - долг
 // родителям важнее того, сколько из кассы ещё никому не обещано.
+// Подпись про срок живой не делается: страница не знает платежей, прошедших
+// после сборки, и, подняв планку сама, назвала бы должником того, кто заплатил.
+// Но и молчать нельзя: календарь рядом живой, и после 30.09 он показывает уже
+// 31.10, а плитка - всё ещё «до 30.09». Два ответа на один вопрос в одном экране.
+// Поэтому сумма остаётся как есть, а приписка объясняет расхождение: цифра не
+// протухла, она просто посчитана на день сборки, и деньги никуда не делись.
+const dueNote=(()=>{
+ if(!T.dueNow)return 'к ближайшему сроку внесено всё';
+ if(!dueDates.length)return `из них ${rub(T.dueNow)}`;
+ const s=`из них ${rub(T.dueNow)}`+(dueDates.length>1?' к ближайшему сроку ':' до ')+dm(dueDates[0]);
+ return parseD(dueDates[0])<NOW
+  ? `${s} - срок прошёл, сумма посчитана на ${ASOFTXT}: платежи после этой даты сюда не попали`
+  : s;})();
 const tiles=[['Собрано',T.collected,''],['Потрачено',T.spent,''],['Остаток',T.rest,'rest']];
-if(T.dueYear)tiles.push(['Осталось внести за год',T.dueYear,'owed',
- T.dueNow?`из них ${rub(T.dueNow)}${dueDates.length
-   ?(dueDates.length>1?' к ближайшему сроку ':' до ')+dm(dueDates[0]):''}`
-  :'к ближайшему сроку внесено всё']);
+if(T.dueYear)tiles.push(['Осталось внести за год',T.dueYear,'owed',dueNote]);
 // «Остаток» - все деньги кассы, «Свободный остаток» - то, что из них ещё никому
 // не обещано. Плитка появляется только когда обязательства есть.
 if(T.promised)tiles.push(['Свободный остаток',T.free,'free',
@@ -948,6 +1069,11 @@ renderSbory();
 // кассы, поэтому он показан отдельным блоком, а не спрятан.
 const OWN=D.kids.filter(k=>!k.ext),
       EXT=D.kids.filter(k=>k.ext&&!k.teach&&k.rest!==0);
+// Личные списания - часть уже потраченного, адресованная конкретным детям: вещь
+// досталась одному, её и оплачивает он, а не весь класс. Поровну поэтому делится
+// не всё «потрачено», а остаток за вычетом адресных трат - иначе подпись под
+// таблицей называла бы долю, которой на самом деле нет ни у кого.
+const PERS=OWN.reduce((a,k)=>a+(k.ownSum||0),0);
 let KFILTER='all';
 function renderKids(f){f=(f||'').trim().toLowerCase();
  let L=OWN.filter(k=>!f||k.name.toLowerCase().includes(f));
@@ -1008,6 +1134,19 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
        :'Ближайший срок'}</span>
       <b${k.debtN?' class="bad"':''}>${k.debtN?rub(k.debtN):'закрыт'}</b></div>`:''}
     </div>
+    ${k.ownSum?`<div class="pays own"><div class="pays-h">Из чего сложилась доля расходов</div>
+      <div class="pay"><span class="pn">Общая часть, поровну со всеми</span>
+       <span class="pa">${rub(k.share-k.ownSum)}</span></div>
+      ${k.own.map(o=>`<div class="pay"><span class="pd">${esc(o.date)}</span>
+        <span class="pn">${esc(o.what)}</span>
+        <span class="pa">${rub(o.amount)}</span>
+        <span class="tag">${esc(o.proof)}</span></div>${
+        o.note?`<div class="pcm">${esc(o.note)}</div>`:''}`).join('')}
+      <div class="pay tot"><span class="pn">Доля расходов</span>
+       <span class="pa">${rub(k.share)}</span></div>
+      <div class="pcm">Это доля расходов, а не долг: по графику взносов ребёнок
+       должен ровно столько же, сколько все остальные.</div>
+     </div>`:''}
     ${steps.length?`<div class="pays plan"><div class="pays-h">Осталось внести по графику</div>
       <div class="sched">${steps.map((x,si)=>
        `<span class="st${si===0?' now':''}"><b>${dm(x.date)}</b> - ${rub(x.amount)}</span>`
@@ -1036,7 +1175,9 @@ function renderKids(f){f=(f||'').trim().toLowerCase();
  if(h)h.innerHTML=`<b>Должен за год</b> - сколько ещё осталось внести до полной суммы сбора;
   мелким шрифтом под ним - какая часть этой суммы нужна к ближайшему сроку.
   <b>Не потрачено</b> - деньги ребёнка, ещё не ушедшие в расходы: внесено минус своя доля
-  (уже потрачено ${rub(D.t.spent)} ÷ ${OWN.length} = ${rub(D.t.spent/OWN.length)} с человека).
+  (${PERS?`общие расходы ${rub(D.t.spent-PERS)}`:`уже потрачено ${rub(D.t.spent)}`} ÷ ${
+   OWN.length} = ${rub((D.t.spent-PERS)/OWN.length)} с человека${PERS
+   ?`; сверх этого у некоторых детей есть личные списания - что именно, видно внутри строки`:''}).
   Это не «долга нет»: долг и не потраченные деньги - разные вещи, и бывают вместе.
   Минус означает, что за ребёнка уже потрачено больше, чем он внёс.`;}
 
@@ -1085,8 +1226,18 @@ bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
  // на страницу ровно ту подпись, от которой родком отказался. Длинное имя
  // обрезается многоточием средствами CSS (.m li span), а не логикой.
  ALL.push({kind:b.role?'teacher':'bd',d:d,m:m,in:r.in,name:b.name});});
-(D.events||[]).forEach(e=>{const [d,m]=e.date.split('.').map(Number);const r=daysTo(d,m);
- ALL.push({kind:e.kind,d:d,m:m,in:r.in,name:e.title,code:e.code,note:e.note||''});});
+// События журнала - разовые, и год у них в дате есть. Переносить их на год
+// вперёд, как день рождения, нельзя: шаг графика «Внести 2 000 ₽ до 25.08» - это
+// первый взнос конкретного сбора, в августе следующего года его уже не будет,
+// а красная строка в календаре звала бы платить второй раз. То же у мероприятия
+// сбора и у планируемого события: съёмка 08.09.2026 в сентябре 2027 не повторится.
+// Поэтому отсчёт идёт по настоящей дате со своим годом, а прошедшее просто
+// уходит из календаря - оно уже случилось. Дни рождения, наоборот, ежегодны,
+// их перенос на следующий год выше остаётся как был.
+(D.events||[]).forEach(e=>{const [d,m,y]=e.date.split('.').map(Number);
+ const on=new Date(y,m-1,d); if(on<NOW)return;
+ ALL.push({kind:e.kind,d:d,m:m,in:Math.round((on-NOW)/86400000),name:e.title,
+  code:e.code,amt:e.amt||'',note:e.note||''});});
 ALL.sort((a,b)=>a.in-b.in);
 // «срок» - деньги в кассу, «платят сами» - мимо неё, родитель отдаёт их напрямую
 // организатору. Подпись «событие» занята мероприятием сбора, оно оплачено кассой.
@@ -1101,10 +1252,13 @@ Object.values(byMonth).forEach(a=>a.sort((x,y)=>x.d-y.d));
 const order=[];for(let i=0;i<12;i++)order.push((8+i)%12);
 document.getElementById('pane-bdays').innerHTML=ALL.length?`
  ${soonList.length?`<div class="hero"><span class="lab">Ближайший месяц</span>
-   ${soonList.map(e=>`<div class="hero-i"><b>${dd(e.d)}.${dd(e.m)}</b>
-     <span class="k k-${e.kind}">${KIND[e.kind]}</span> ${esc(e.name)}
+   ${soonList.map(e=>`<div class="hero-i clip"${
+     e.note?` title="${esc(e.note)}"`:''}><b>${dd(e.d)}.${dd(e.m)}</b>
+     <span class="k k-${e.kind}">${KIND[e.kind]}</span>
+     <span class="ti">${esc(e.name)}</span>
      <span class="in">${e.in===0?'сегодня':(e.in===1?'завтра':'через '+e.in+' дн.')}</span>
-     ${e.note?`<i class="pn">${esc(e.note)}</i>`:''}</div>`).join('')}
+     ${e.amt||e.note?`<i class="pn">${e.amt?`<b>${esc(e.amt)}</b>`:''}${
+       e.amt&&e.note?' · ':''}${esc(e.note)}</i>`:''}</div>`).join('')}
   </div>`:'<div class="hero none">В ближайший месяц событий нет.</div>'}
  <div class="cal">${order.map(m=>{
    const items=byMonth[m]||[];
@@ -1112,9 +1266,17 @@ document.getElementById('pane-bdays').innerHTML=ALL.length?`
     <h4>${MONT[m]}</h4>
     ${items.length?`<ul>${items.map(e=>`<li class="${e.in<=14?'soon':''} l-${e.kind}"${
       e.note?` title="${esc(e.note)}"`:''}>
-      <b>${dd(e.d)}</b><span>${esc(e.name)}</span></li>`).join('')}</ul>`
+      <b>${dd(e.d)}</b><span>${esc(e.name)}${e.amt?` - ${esc(e.amt)}`:''}</span></li>`).join('')}</ul>`
      :'<div class="none">-</div>'}</div>`;}).join('')}</div>`
  :'<div class="empty">Событий нет.</div>';
+// Нажимаемой становится только та карточка, у которой комментарий действительно
+// не поместился в одну строку. Это видно лишь после вёрстки - длина строки зависит
+// от ширины экрана, - поэтому меряется здесь, а не решается в шаблоне. Иначе день
+// рождения выглядел бы нажимаемым, а нажатие ничего бы не меняло.
+document.querySelectorAll('#pane-bdays .hero-i .pn').forEach(n=>{
+ if(n.scrollHeight>n.clientHeight+1)n.parentNode.classList.add('more');});
+document.getElementById('pane-bdays').addEventListener('click',e=>{
+ const n=e.target.closest('.hero-i.more'); if(n)n.classList.toggle('clip');});
 
 // пояснения по вкладкам
 const EXPL={
@@ -1141,6 +1303,10 @@ const EXPL={
   ['Направление','Категория расхода: праздник, подарки, канцтовары и так далее. По ней видно, на что уходят деньги класса.'],
   ['Строка с минусом','Возмещение: деньги вернулись в кассу - например, соседний класс возместил свою долю общей траты. Такая строка уменьшает и общие расходы, и долю каждого ребёнка поровну. Это не долг и не ошибка: денег в кассе стало больше, а не меньше.'],
   ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются - в группе с возмещением итог может оказаться меньше отдельной траты или уйти в минус.']]};
+// Пояснение появляется только когда личные списания есть: на пустом листе оно
+// объясняло бы то, чего на странице нет.
+if(PERS)EXPL.kids.splice(2,0,['Личные списания',
+ 'Расходную вещь, доставшуюся конкретному ребёнку, оплачивает он, а не весь класс: её стоимость входит в его долю расходов отдельной строкой. Доля тогда больше общей - у кого именно и за что, видно внутри строки. Это не долг: по графику взносов такой ребёнок должен ровно столько же, сколько все остальные, просто не потраченных денег у него на эту сумму меньше.']);
 for(const [k,items] of Object.entries(EXPL)){
  const el=document.getElementById('ex-'+k); if(!el)continue;
  el.innerHTML=`<button class="btn wide" data-toggle="exp-${k}" aria-expanded="false">Как это считается<span class="chev">▾</span></button>
