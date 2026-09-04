@@ -101,6 +101,11 @@ ev = wb["События"] if "События" in wb.sheetnames else None
 # добавляет, а только делит иначе: не поровну на класс, а на того, кому вещь
 # досталась. Лист появился позже остальных, его отсутствие - не ошибка.
 ls = wb["Личные списания"] if "Личные списания" in wb.sheetnames else None
+# Хронология кассы со сквозным остатком: приход и расход по дням, сверху вниз.
+# Родитель видит «собрано», «потрачено» и остаток, но свести их сам не может -
+# взносы и траты лежат в разных списках. Этот лист даёт пройти сверху вниз и
+# прийти к той же цифре. Лист появился позже остальных, его отсутствие - не ошибка.
+mv = wb["Движение"] if "Движение" in wb.sheetnames else None
 
 # Границы данных не записаны числами: их читает journal.bounds() из самого журнала -
 # по шапке сверху и по строке «ИТОГО…» снизу. Класс растёт посреди года, под списки
@@ -118,6 +123,10 @@ EV_FIRST, EV_LAST = journal.bounds_open(ev, "Дата") if ev is not None else (
 # У «Личных списаний» строка «ИТОГО списано лично» есть - границы читаются обычным
 # bounds(). Пустой лист даёт пустой диапазон, и на странице не появляется ничего.
 LS_FIRST, LS_LAST = journal.bounds(ls, "Дата") if ls is not None else (0, -1)
+# У «Движения» итога нет: приход с расходом в одну сумму не складываются. Данные
+# кончаются первой пустой датой - ниже лежит блок сверки и подпись под ним,
+# см. journal.bounds_blank().
+MV_FIRST, MV_LAST = journal.bounds_blank(mv, "Дата") if mv is not None else (0, -1)
 # Колонка ребёнка в матрицах выводится из номера его строки, поэтому matrix_col
 # заодно сверяет имена в шапках со списком: разъехавшись, они выдали бы детям
 # чужие долги, и отчёт всё равно собрался бы.
@@ -218,6 +227,47 @@ if ob is not None:
                          "who": ob.cell(row=r, column=6).value or "",
                          "note": ob.cell(row=r, column=7).value or ""})
     promises.sort(key=lambda x: x["date"].split(".")[::-1])
+
+
+# Движение денег: B дата, C операция, D пришло, E ушло, F остаток после операции,
+# G подтверждение. Лист считается из «Взносов» и «Расходов», руками не правится;
+# взносы одного дня уже сведены там в одну строку («Взносы, 10 чел.»).
+#
+# Возмещение от соседнего класса стоит здесь в приходе, хотя в «Расходах» это
+# строка со знаком минус. Это не противоречие: в «Расходах» знак нужен, чтобы
+# возврат уменьшил и общие траты, и долю каждого ребёнка, а в ленте кассы деньги
+# именно пришли - в этот день на карте стало больше. Так и задумано.
+flow = []
+for r in range(MV_FIRST, MV_LAST + 1):
+    date = dt(mv.cell(row=r, column=2).value)
+    if not date:
+        continue
+    flow.append({"date": date, "what": mv.cell(row=r, column=3).value or "",
+                 "in": num(mv.cell(row=r, column=4).value),
+                 "out": num(mv.cell(row=r, column=5).value),
+                 "bal": num(mv.cell(row=r, column=6).value),
+                 "proof": str(mv.cell(row=r, column=7).value or "со слов").lower()})
+
+# Вся ценность ленты в том, что по ней можно пройти сверху вниз и прийти к остатку
+# из шапки. Значит проверяются обе вещи: каждый шаг (остаток предыдущей строки плюс
+# приход минус расход) и последняя строка против «Остатка кассы» со «Свода». Не
+# сошлось - сборка останавливается: страница, по которой нельзя сойтись, хуже, чем
+# её отсутствие, потому что выглядит как доказательство.
+_prev = 0
+for i, f in enumerate(flow):
+    want = _prev + f["in"] - f["out"]
+    if abs(want - f["bal"]) > 0.005:
+        raise SystemExit(
+            f"СБОРКА ОСТАНОВЛЕНА: на листе «Движение» в строке {MV_FIRST + i} остаток не сходится.\n"
+            f"«{f['what']}» от {f['date']}: {_prev:.2f} + {f['in']:.2f} - {f['out']:.2f} = {want:.2f}, "
+            f"а в колонке F стоит {f['bal']:.2f}.")
+    _prev = f["bal"]
+if flow and abs(_prev - totals["rest"]) > 0.005:
+    raise SystemExit(
+        f"СБОРКА ОСТАНОВЛЕНА: последний остаток «Движения» ({_prev:.2f}) не сходится "
+        f"с остатком кассы со «Свода» ({totals['rest']:.2f}).\n"
+        "Лента для того и нужна, чтобы родитель пришёл по ней к той же цифре, "
+        "что в шапке - пересчитайте журнал.")
 
 
 # Планируемые события: B дата, C что, D сумма с участника, E кто организует,
@@ -432,7 +482,7 @@ for s in sbory:
 # деньги в кассу, «платят сами» - деньги мимо неё. На расчёты не влияют.
 EVENTS += plans
 DATA = json.dumps({"t": totals, "events": EVENTS, "sbory": sbory,
-                   "spends": all_spends, "promises": promises,
+                   "spends": all_spends, "promises": promises, "flow": flow,
                    "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
                   ensure_ascii=False)
 
@@ -507,6 +557,21 @@ PAGE = r"""<!DOCTYPE html>
      box-shadow:0 2px 10px rgba(22,24,29,.06);
      scrollbar-width:none;-ms-overflow-style:none;overscroll-behavior-x:contain;}
  nav::-webkit-scrollbar{display:none;}
+ /* С пятой вкладкой полоса перестала помещаться в строку на телефоне. Прокрутка
+    вбок здесь была всегда, но до сих пор ни разу не срабатывала, и обрезанная
+    вкладка читалась бы как обрезанная, а не как «листайте». Тень у края - тот же
+    приём, что у .scroller: background-attachment:local гасит её с той стороны,
+    где прокручивать уже нечего. Нарастить полосу на вторую строку нельзя - она
+    липкая, и на телефоне это отняло бы у списка ещё сорок точек по высоте. */
+ nav{background:
+   linear-gradient(to right,var(--bg) 30%,rgba(255,255,255,0)) 0 0,
+   linear-gradient(to left,var(--bg) 30%,rgba(255,255,255,0)) 100% 0,
+   radial-gradient(farthest-side at 0 50%,rgba(22,24,29,.13),rgba(22,24,29,0)) 0 0,
+   radial-gradient(farthest-side at 100% 50%,rgba(22,24,29,.13),rgba(22,24,29,0)) 100% 0,
+   var(--bg);
+  background-repeat:no-repeat;
+  background-size:28px 100%,28px 100%,11px 100%,11px 100%,auto;
+  background-attachment:local,local,scroll,scroll,scroll;}
  nav button{flex:1 0 auto;border:0;background:transparent;font:inherit;font-size:14.5px;padding:9px 6px;
             border-radius:8px;cursor:pointer;color:var(--dim);white-space:nowrap;min-height:44px;}
  @media(max-width:400px){
@@ -752,6 +817,53 @@ PAGE = r"""<!DOCTYPE html>
  /* Итог группы уходит в минус, если возмещение перекрыло траты этого дня. */
  .mhead span.back{color:var(--good);font-weight:600;}
  ul.list.pad12{padding:0 12px;} .sub{color:var(--dim);font-size:12px;}
+ /* --- Лента кассы («Пришло и ушло») ------------------------------------------
+    Таблицы здесь нет намеренно. Пять колонок - дата, операция, пришло, ушло,
+    остаток - на 390 px не встают: одна операция бывает в полсотни знаков.
+    Табличную вёрстку пришлось бы прокручивать вбок, а прокрутка страницы вбок
+    на телефоне ломает и сам список. Поэтому строка сложена в два уровня: сверху
+    дата, операция и сумма, снизу справа - сквозной остаток. Остаток при этом
+    остаётся ровной колонкой у правого края, а ради неё вкладка и заведена. */
+ .mvm{margin-bottom:10px;}
+ .mvh{display:grid;grid-template-columns:1fr auto auto;gap:1px 8px;width:100%;
+      align-items:baseline;}
+ .mvh .mn{font-size:14px;font-weight:700;}
+ .mvh .mb{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ink);
+          font-weight:600;font-size:13px;}
+ /* Вторая строка шапки месяца - под всеми тремя колонками первой. */
+ .mvh .ms{grid-column:1/-1;font-size:11.5px;color:var(--dim);font-weight:400;
+          font-variant-numeric:tabular-nums;}
+ .mv{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;
+     padding:8px 11px;border-bottom:1px solid var(--line);font-size:13.5px;}
+ .mv:last-child{border-bottom:none;}
+ /* Приход и расход различаются подложкой и знаком, а не цветом: зелёное против
+    красного читалось бы как «хорошо» против «плохо», а это просто движение -
+    деньги пришли или ушли, и ни то ни другое не оценка. */
+ .mv.plus{background:#f6f8fc;}
+ .mv .d{flex:none;width:36px;font-variant-numeric:tabular-nums;color:var(--dim);
+        font-size:12px;}
+ /* flex:1 1 0, а не auto: с естественным базисом длинная операция уводила бы
+    сумму на свою строку - как это было с заголовком в «Ближайшем месяце». */
+ .mv .op{flex:1 1 0;min-width:0;}
+ .mv .am{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600;}
+ .mv .bal{flex:0 0 100%;text-align:right;font-size:11.5px;color:var(--dim);
+          font-variant-numeric:tabular-nums;}
+ .mv .bal i{font-style:normal;}
+ /* Шапка колонок появляется только там, где строка укладывается в одну линию и
+    заголовкам есть над чем стоять. На телефоне строка двухуровневая, и шапка
+    над ней врала бы: колонки там не колонки. Подписывают себя сами - знак «+»
+    или «−» у суммы и слово «осталось» у остатка. */
+ .mvhd{display:none;}
+ @media(min-width:560px){
+  .mv .am{flex:none;width:118px;text-align:right;}
+  .mv .bal{flex:none;width:152px;font-size:12.5px;}
+  /* Со включённой шапкой слово «осталось» в каждой строке повторяет заголовок
+     колонки. На телефоне шапки нет, и там оно и подписывает число. */
+  .mv .bal i{display:none;}
+  .mvhd{display:flex;background:#fbfcfe;font-size:10.5px;text-transform:uppercase;
+        letter-spacing:.04em;color:var(--dim);font-weight:600;padding:6px 11px;}
+  .mvhd .am,.mvhd .bal{font-weight:600;color:var(--dim);font-size:10.5px;}
+ }
  .bd{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);
      font-size:14.5px;}
  .bd:last-child{border-bottom:none;}
@@ -812,6 +924,8 @@ PAGE = r"""<!DOCTYPE html>
   table{min-width:0;} .scroller{overflow:visible;}
   #pane-kids::before{content:"По каждому ребёнку";display:block;font-size:16px;
    color:var(--accent);font-weight:700;margin:24px 0 10px;}
+  #pane-flow::before{content:"Пришло и ушло";display:block;font-size:16px;
+                     font-weight:700;margin:0 0 8px;}
   #pane-spends::before{content:"Все траты";display:block;font-size:16px;
    color:var(--accent);font-weight:700;margin:24px 0 10px;}
   .expl .btn{display:none!important;} .expl dl{break-inside:avoid;}
@@ -857,6 +971,7 @@ PAGE = r"""<!DOCTYPE html>
   <button role="tab" data-tab="sbory" aria-selected="false">Сборы</button>
   <button role="tab" data-tab="kids" aria-selected="false">По детям</button>
   <button role="tab" data-tab="spends" aria-selected="false">Расходы</button>
+  <button role="tab" data-tab="flow" aria-selected="false">Пришло и ушло</button>
  </nav>
  <div id="pane-bdays"></div>
  <div class="expl" id="ex-bdays"></div>
@@ -872,6 +987,8 @@ PAGE = r"""<!DOCTYPE html>
  </div>
  <div id="pane-spends" hidden></div>
  <div class="expl" id="ex-spends" hidden></div>
+ <div id="pane-flow" hidden></div>
+ <div class="expl" id="ex-flow" hidden></div>
 
  <footer>Сформировано __ASOF__ автоматически из журнала «Касса_2В_2026-2027.xlsx».
   Цифры руками не набираются. Версия __STAMP__.</footer>
@@ -1302,7 +1419,12 @@ const EXPL={
   ['Привязка к сбору','Каждый расход относится к конкретному сбору и делится только между его участниками.'],
   ['Направление','Категория расхода: праздник, подарки, канцтовары и так далее. По ней видно, на что уходят деньги класса.'],
   ['Строка с минусом','Возмещение: деньги вернулись в кассу - например, соседний класс возместил свою долю общей траты. Такая строка уменьшает и общие расходы, и долю каждого ребёнка поровну. Это не долг и не ошибка: денег в кассе стало больше, а не меньше.'],
-  ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются - в группе с возмещением итог может оказаться меньше отдельной траты или уйти в минус.']]};
+  ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются - в группе с возмещением итог может оказаться меньше отдельной траты или уйти в минус.']],
+ flow:[['Зачем эта вкладка','Чтобы остаток не приходилось принимать на веру. Пройдите сверху вниз: каждая строка прибавляет или вычитает, справа - сколько осталось после неё. Последняя цифра - та же, что в плитке «Остаток» наверху.'],
+  ['Порядок строк','Строго по дням, от первой операции к последней. Ничего не сортируется и не переставляется - иначе сквозной остаток потерял бы смысл.'],
+  ['Месяцы','Свежий месяц раскрыт, прошедшие свёрнуты до строки итога: сколько пришло, сколько ушло и с чем месяц закончился. Нажмите на месяц, чтобы раскрыть его целиком.'],
+  ['Взносы одной строкой','Платежи, пришедшие в один день, сведены в одну строку - «Взносы, N чел.». Кто именно и сколько внёс, видно во вкладке «По детям». Траты, наоборот, стоят каждая своей строкой.'],
+  ['Возмещение в приходе','Возврат от соседнего класса за общее оформление стоит в приходе: в этот день на карте действительно стало больше. Во вкладке «Расходы» та же операция идёт со знаком минус - там знак нужен, чтобы возврат уменьшил и общие траты, и долю каждого ребёнка.']]};
 // Пояснение появляется только когда личные списания есть: на пустом листе оно
 // объясняло бы то, чего на странице нет.
 if(PERS)EXPL.kids.splice(2,0,['Личные списания',
@@ -1363,11 +1485,60 @@ function renderSpends(){
 }
 renderSpends();
 
+// Лента кассы. Смысл вкладки не в бухгалтерской форме, а в том, чтобы родитель
+// пришёл к остатку из шапки сам, не принимая его на веру: «собрано» и «потрачено»
+// лежат в разных списках, и свести их иначе нечем. Отсюда всё устройство: порядок
+// строго хронологический, снизу вверх ничего не сортируется и не переставляется,
+// а последняя строка обязана дать ту же цифру, что плитка «Остаток». Сходимость
+// проверена на сборке (см. tools/build_report.py) и в tools/verify.py.
+const FLOW=D.flow||[];
+if(!FLOW.length){
+ // Журнал без листа «Движение» - прошлогодний. Пятой вкладке тогда неоткуда
+ // взяться, и пустой она висеть не должна: её просто нет.
+ ['nav button[data-tab=flow]','#pane-flow','#ex-flow'].forEach(sel=>{
+  const el=document.querySelector(sel); if(el)el.remove();});
+}else{
+ const fg=[];
+ FLOW.forEach(f=>{const [d,m,y]=f.date.split('.').map(Number);
+  let g=fg[fg.length-1];
+  if(!g||g.m!==m||g.y!==y)fg.push(g={m:m,y:y,items:[],in:0,out:0,bal:0});
+  g.items.push(f); g.in+=f.in; g.out+=f.out; g.bal=f.bal;});
+ // Раскрыт последний месяц - тот, в котором лента заканчивается и стоит нужная
+ // цифра. Прошлые свёрнуты до строки итога: к концу года операций наберётся за
+ // сотню, и развёрнутая лента перестанет читаться.
+ document.getElementById('pane-flow').innerHTML=fg.map((g,i)=>{
+  const open=i===fg.length-1;
+  return `<div class="mvm">
+   <button class="btn mvh" data-toggle="fm${i}" aria-expanded="${open}">
+    <span class="mn">${MONT[g.m-1]} ${g.y}</span>
+    <span class="mb">осталось ${rub(g.bal)}</span><span class="chev">▾</span>
+    <span class="ms">пришло ${rub(g.in)} · ушло ${rub(g.out)} · ${g.items.length} ${
+      plural(g.items.length,'операция','операции','операций')}</span></button>
+   <div class="panel${open?' open':''}" id="fm${i}"><div class="rows">
+    <div class="mv mvhd"><span class="d">Дата</span><span class="op">Операция</span>
+     <span class="am">Пришло / ушло</span><span class="bal">Осталось</span></div>${
+    g.items.map(f=>`<div class="mv ${f.in?'plus':'minus'}">
+     <span class="d">${esc(dm(f.date))}</span>
+     <span class="op">${esc(f.what)}</span>
+     <span class="am">${f.in?'+'+rub(f.in):rub(-f.out)}</span>
+     <span class="bal"><i>осталось </i>${rub(f.bal)}</span></div>`).join('')}</div></div>
+   </div>`;}).join('')
+  +`<div class="hint">Это движение денег класса, а не выписка по карте казначея:
+    часть покупок родители делали сами, а касса возмещала им переводом. Даты трат -
+    это даты покупки, а не списания с карты. Строка «Взносы, N чел.» - платежи
+    одного дня, сведённые в одну: по именам они разложены во вкладке «По детям».</div>`;
+}
+
 document.addEventListener('click',e=>{
  const tab=e.target.closest('nav button');
  if(tab){document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-selected',String(b===tab)));
-  ['bdays','sbory','kids','spends'].forEach(n=>{
-   document.getElementById('pane-'+n).hidden=(n!==tab.dataset.tab);
+  // Крайняя вкладка на узком экране видна не целиком. Нажали по её краю - полоса
+  // подтягивает её к себе, иначе выбранной оказывается кнопка, которую не видно.
+  tab.scrollIntoView({block:'nearest',inline:'nearest'});
+  // Вкладки перечислены здесь, а не собираются из nav: «Пришло и ушло» удаляется
+  // из nav, когда листа «Движение» в журнале нет, и её панель уходит вместе с ней.
+  ['bdays','sbory','kids','spends','flow'].forEach(n=>{
+   const pn=document.getElementById('pane-'+n); if(pn)pn.hidden=(n!==tab.dataset.tab);
    const ex=document.getElementById('ex-'+n); if(ex)ex.hidden=(n!==tab.dataset.tab);});
   // «Как это считается» сворачивается при уходе с вкладки: вернувшись, человек
   // видит её в исходном виде, а не с развёрнутым посреди экрана пояснением
