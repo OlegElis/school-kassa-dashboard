@@ -545,7 +545,14 @@ PAGE = r"""<!DOCTYPE html>
  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;}
  .tiles.c3{grid-template-columns:repeat(3,1fr);}
  .tile{background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:11px 12px;}
- .tile .lab{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;}
+ .tile .lab{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;
+            display:flex;justify-content:space-between;gap:6px;}
+ /* Плитки «Собрано», «Потрачено», «Остаток» ведут в свой режим «Денег». Они
+    остаются цифрами, а не кнопками: нажимаемость подсказывают стрелка в подписи
+    и рамка при наведении. */
+ .tile[data-go]{cursor:pointer;}
+ .tile[data-go]:hover{border-color:var(--accent);}
+ .tile .go{color:var(--accent);font-weight:700;font-size:14px;line-height:1;flex:none;}
  .tile .val{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;}
  .tile .tnote{font-size:11.5px;color:var(--dim);margin-top:4px;}
  .tile.rest{border-color:var(--good);} .tile.rest .val{color:var(--good);}
@@ -562,8 +569,10 @@ PAGE = r"""<!DOCTYPE html>
      box-shadow:0 2px 10px rgba(22,24,29,.06);
      scrollbar-width:none;-ms-overflow-style:none;overscroll-behavior-x:contain;}
  nav::-webkit-scrollbar{display:none;}
- /* С пятой вкладкой полоса перестала помещаться в строку на телефоне. Прокрутка
-    вбок здесь была всегда, но до сих пор ни разу не срабатывала, и обрезанная
+ /* Четыре вкладки в строку на телефоне помещаются; пятая («Пришло и ушло», до
+    06.09.2026) уже нет - потому её и слили с «Расходами» в «Деньги». Прокрутка
+    вбок остаётся на случай длинных подписей: до пятой вкладки она ни разу не
+    срабатывала, и обрезанная
     вкладка читалась бы как обрезанная, а не как «листайте». Тень у края - тот же
     приём, что у .scroller: background-attachment:local гасит её с той стороны,
     где прокручивать уже нечего. Нарастить полосу на вторую строку нельзя - она
@@ -669,6 +678,13 @@ PAGE = r"""<!DOCTYPE html>
        font:inherit;font-size:13px;color:var(--dim);cursor:pointer;
        display:inline-flex;align-items:center;min-height:44px;white-space:nowrap;}
  .chip[aria-pressed=true]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;}
+ /* Переключатель режимов «Денег»: три чипа одной строкой на всю ширину, без
+    переноса. Чипы групп внутри режима («По датам…») переносятся как раньше. */
+ .modes{display:flex;gap:6px;margin-bottom:12px;}
+ /* Скруглённые прямоугольники, а не пилюли: под ними в «Ушло» и «Пришло» стоит
+    второй ряд чипов-групп, и два одинаковых ряда читались бы как один. */
+ .modes .chip{flex:1 1 0;justify-content:center;padding:5px 6px;border-radius:9px;}
+ .print-only{display:none;}
  .rows{background:var(--bg);border:1px solid var(--line);border-radius:11px;overflow:hidden;}
  .row{border-bottom:1px solid var(--line);}
  .row:last-child{border-bottom:none;}
@@ -822,7 +838,7 @@ PAGE = r"""<!DOCTYPE html>
  /* Итог группы уходит в минус, если возмещение перекрыло траты этого дня. */
  .mhead span.back{color:var(--good);font-weight:600;}
  ul.list.pad12{padding:0 12px;} .sub{color:var(--dim);font-size:12px;}
- /* --- Лента кассы («Пришло и ушло») ------------------------------------------
+ /* --- Лента кассы (режим «Лента» вкладки «Деньги») ------------------------------------------
     Таблицы здесь нет намеренно. Пять колонок - дата, операция, пришло, ушло,
     остаток - на 390 px не встают: одна операция бывает в полсотни знаков.
     Табличную вёрстку пришлось бы прокручивать вбок, а прокрутка страницы вбок
@@ -929,10 +945,12 @@ PAGE = r"""<!DOCTYPE html>
   table{min-width:0;} .scroller{overflow:visible;}
   #pane-kids::before{content:"По каждому ребёнку";display:block;font-size:16px;
    color:var(--accent);font-weight:700;margin:24px 0 10px;}
-  #pane-flow::before{content:"Пришло и ушло";display:block;font-size:16px;
-                     font-weight:700;margin:0 0 8px;}
-  #pane-spends::before{content:"Все траты";display:block;font-size:16px;
+  /* На бумаге родителю нужно «на что», а не хронология: из трёх режимов «Денег»
+     печатается только копия «Ушло» по направлениям (#m-print). Лента и «Пришло»
+     не идут, переключатель тоже. id перевешивает [hidden] выше по специфичности. */
+  #pane-money::before{content:"На что ушли деньги";display:block;font-size:16px;
    color:var(--accent);font-weight:700;margin:24px 0 10px;}
+  #m-flow,#m-out,#m-in,.modes{display:none!important;} .print-only{display:block!important;}
   .expl .btn{display:none!important;} .expl dl{break-inside:avoid;}
   .row-b{display:block!important;} .row{break-inside:avoid;} .chips{display:none!important;}
  }
@@ -991,10 +1009,8 @@ PAGE = r"""<!DOCTYPE html>
           aria-controls="pane-sbory ex-sbory">Сборы</button>
   <button role="tab" id="tab-kids" data-tab="kids" aria-selected="false" tabindex="-1"
           aria-controls="pane-kids">По детям</button>
-  <button role="tab" id="tab-spends" data-tab="spends" aria-selected="false" tabindex="-1"
-          aria-controls="pane-spends ex-spends">Расходы</button>
-  <button role="tab" id="tab-flow" data-tab="flow" aria-selected="false" tabindex="-1"
-          aria-controls="pane-flow ex-flow">Пришло и ушло</button>
+  <button role="tab" id="tab-money" data-tab="money" aria-selected="false" tabindex="-1"
+          aria-controls="pane-money ex-money">Деньги</button>
  </nav>
  <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays"></div>
  <div class="expl" id="ex-bdays"></div>
@@ -1009,10 +1025,25 @@ PAGE = r"""<!DOCTYPE html>
   <div class="hint" id="kidhint"></div>
   <div class="expl" id="ex-kids"></div>
  </div>
- <div id="pane-spends" role="tabpanel" aria-labelledby="tab-spends" hidden></div>
- <div class="expl" id="ex-spends" hidden></div>
- <div id="pane-flow" role="tabpanel" aria-labelledby="tab-flow" hidden></div>
- <div class="expl" id="ex-flow" hidden></div>
+ <!-- «Деньги» - три режима одной вкладки вместо прежних «Расходов» и «Пришло и ушло»:
+      траты жили в двух местах, родитель угадывал, куда смотреть, а пятая вкладка на
+      телефоне не помещалась в строку. Лента - всё подряд со сквозным остатком,
+      «Ушло» - только траты, «Пришло» - только взносы. Остаток показывается ТОЛЬКО
+      в Ленте: в перегруппированном списке цифра рядом со строкой врала бы - между
+      соседями пропущены другие операции. m-print - копия «Ушло» по направлениям
+      только для печати: на бумаге нужно «на что», а не хронология. -->
+ <div id="pane-money" role="tabpanel" aria-labelledby="tab-money" hidden>
+  <div class="modes" id="mmode" role="group" aria-label="Что показать">
+   <button class="chip" data-mode="flow" aria-pressed="true">Лента</button>
+   <button class="chip" data-mode="out" aria-pressed="false">Ушло</button>
+   <button class="chip" data-mode="in" aria-pressed="false">Пришло</button>
+  </div>
+  <div id="m-flow"></div>
+  <div id="m-out" hidden></div>
+  <div id="m-in" hidden></div>
+  <div id="m-print" class="print-only"></div>
+ </div>
+ <div class="expl" id="ex-money" hidden></div>
 
  <footer>Сформировано __ASOF__ автоматически из журнала «Касса_2В_2026-2027.xlsx».
   Цифры руками не набираются. Версия __STAMP__.</footer>
@@ -1118,15 +1149,25 @@ const dueNote=(()=>{
  return parseD(dueDates[0])<NOW
   ? `${s} - срок прошёл, сумма посчитана на ${ASOFTXT}: платежи после этой даты сюда не попали`
   : s;})();
-const tiles=[['Собрано',T.collected,''],['Потрачено',T.spent,''],['Остаток',T.rest,'rest']];
+// Пятый элемент - режим «Денег», куда ведёт плитка: «Собрано» в «Пришло»,
+// «Потрачено» в «Ушло», «Остаток» в Ленту. Плитки долга никуда не ведут.
+const tiles=[['Собрано',T.collected,'','','in'],['Потрачено',T.spent,'','','out'],
+             ['Остаток',T.rest,'rest','','flow']];
 if(T.dueYear)tiles.push(['Осталось внести за год',T.dueYear,'owed',dueNote]);
 // «Остаток» - все деньги кассы, «Свободный остаток» - то, что из них ещё никому
 // не обещано. Плитка появляется только когда обязательства есть.
 if(T.promised)tiles.push(['Свободный остаток',T.free,'free',
  `остаток кассы минус ${rub(T.promised)} уже обещанных`]);
-document.getElementById('tiles').innerHTML=tiles.map(([l,v,c,n])=>
- `<div class="tile ${c}"><div class="lab">${l}</div><div class="val">${rub(v)}</div>${
+document.getElementById('tiles').innerHTML=tiles.map(([l,v,c,n,go])=>
+ `<div class="tile ${c}"${go?` data-go="${go}" role="link" tabindex="0"`:''}><div class="lab">${l}${
+   go?'<span class="go" aria-hidden="true">›</span>':''}</div><div class="val">${rub(v)}</div>${
    n?`<div class="tnote">${n}</div>`:''}</div>`).join('');
+// role="link" и tabindex ради клавиатуры: div сам по себе с неё не нажимается.
+document.getElementById('tiles').addEventListener('click',e=>{
+ const t=e.target.closest('.tile[data-go]'); if(t)goMoney(t.dataset.go);});
+document.getElementById('tiles').addEventListener('keydown',e=>{
+ const t=e.target.closest('.tile[data-go]');
+ if(t&&(e.key==='Enter'||e.key===' ')){e.preventDefault();goMoney(t.dataset.go);}});
 // Считаем плитки верхнего ряда: широкий «Свободный остаток» в сетку колонок не входит.
 if(tiles.length-(T.promised?1:0)===3)document.getElementById('tiles').classList.add('c3');
 
@@ -1437,17 +1478,18 @@ const EXPL={
   ['Считается по каждому сбору отдельно','Переплата по одному сбору не закрывает нехватку по другому. Нажмите на строку, чтобы увидеть разбивку по каждому сбору.'],
   ['Сортировка','Нажмите на заголовок колонки. Повторное нажатие меняет направление.'],
   ['Нашли ошибку','Если платежа нет или сумма не совпадает, напишите Ане, поправим и перевыпустим отчёт.']],
- spends:[['Обещано, но не оплачено','Услуга заказана или вещь обещана, а деньги ещё лежат на карте. В расходы такие строки не попадают и в долю на ребёнка не входят - доля считается только по тому, что уже потрачено. Когда оплата пройдёт, строка переедет в список трат. «Свободный остаток» в шапке - это остаток кассы за вычетом обещанного.'],
+ money:[['Три режима','«Лента» - всё подряд, взносы и траты вперемешку, с остатком после каждой операции. «Ушло» - только траты: по датам, по направлениям или по сборам. «Пришло» - только взносы: по датам или по детям. Плитки «Собрано», «Потрачено» и «Остаток» наверху ведут каждая в свой режим.'],
+  ['Остаток только в Ленте','В «Ушло» и «Пришло» колонки «осталось» нет намеренно. Остаток после операции имеет смысл только в полной хронологии: в перегруппированном списке между соседними строками пропущены другие операции, и цифра рядом со строкой врала бы.'],
+  ['Зачем Лента','Чтобы остаток не приходилось принимать на веру. Внутри месяца пройдите сверху вниз: каждая строка прибавляет или вычитает, справа - сколько осталось после неё. Последняя строка верхнего месяца даёт ту же цифру, что плитка «Остаток» наверху.'],
+  ['Порядок строк в Ленте','Месяцы идут от свежего к старому, а строки внутри месяца - строго по дням, от первой операции к последней. Внутри месяца ничего не сортируется и не переставляется - иначе сквозной остаток потерял бы смысл. Свежий месяц раскрыт, прошедшие свёрнуты до строки итога: сколько пришло, сколько ушло и с чем месяц закончился. Нажмите на месяц, чтобы раскрыть его целиком.'],
+  ['Пришло','Только взносы детей - те же строки, что в Ленте помечены «Взнос: …». По датам - кто внёс в этот день; по детям - у каждого сумма и число платежей, нажмите на строку, там даты и суммы. Возмещение от соседнего класса сюда не входит: это не взнос.'],
+  ['Обещано, но не оплачено','Блок в начале «Ушло». Услуга заказана или вещь обещана, а деньги ещё лежат на карте. В расходы такие строки не попадают и в долю на ребёнка не входят - доля считается только по тому, что уже потрачено. Когда оплата пройдёт, строка переедет в список трат. «Свободный остаток» в шапке - это остаток кассы за вычетом обещанного.'],
   ['Что именно купили','Если у расхода есть расшифровка - что вошло в чек, - строка раскрывается нажатием. Строки без расшифровки не раскрываются.'],
   ['Подтверждения','Бумажные чеки по классу не собираются. У каждого расхода указано, чем он подтверждён: скрин оплаты, чек или только со слов.'],
   ['Привязка к сбору','Каждый расход относится к конкретному сбору и делится только между его участниками.'],
   ['Направление','Категория расхода: праздник, подарки, канцтовары и так далее. По ней видно, на что уходят деньги класса.'],
-  ['Строка с минусом','Возмещение: деньги вернулись в кассу - например, соседний класс возместил свою долю общей траты. Такая строка уменьшает и общие расходы, и долю каждого ребёнка поровну. Это не долг и не ошибка: денег в кассе стало больше, а не меньше.'],
-  ['Группировка','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются - в группе с возмещением итог может оказаться меньше отдельной траты или уйти в минус.']],
- flow:[['Зачем эта вкладка','Чтобы остаток не приходилось принимать на веру. Внутри месяца пройдите сверху вниз: каждая строка прибавляет или вычитает, справа - сколько осталось после неё. Последняя строка верхнего месяца даёт ту же цифру, что плитка «Остаток» наверху.'],
-  ['Порядок строк','Месяцы идут от свежего к старому, а строки внутри месяца - строго по дням, от первой операции к последней. Внутри месяца ничего не сортируется и не переставляется - иначе сквозной остаток потерял бы смысл.'],
-  ['Месяцы','Свежий месяц стоит первым и раскрыт, прошедшие ниже свёрнуты до строки итога: сколько пришло, сколько ушло и с чем месяц закончился. Нажмите на месяц, чтобы раскрыть его целиком.'],
-  ['Возмещение в приходе','Возврат от соседнего класса за общее оформление стоит в приходе: в этот день на карте действительно стало больше. Во вкладке «Расходы» та же операция идёт со знаком минус - там знак нужен, чтобы возврат уменьшил и общие траты, и долю каждого ребёнка.']]};
+  ['Возмещение','Деньги вернулись в кассу - например, соседний класс возместил свою долю общей траты. В «Ушло» это строка с минусом и меткой «возмещение»: она уменьшает и общие расходы, и долю каждого ребёнка поровну, а итог группы с возмещением может оказаться меньше отдельной траты или уйти в минус. В Ленте та же операция стоит в приходе: в тот день на карте действительно стало больше. Это не долг и не ошибка.'],
+  ['Группировка в «Ушло»','Переключатель над списком: по датам, по направлениям или по сборам. Суммы в заголовках групп пересчитываются.']]};
 // Пояснение появляется только когда личные списания есть: на пустом листе оно
 // объясняло бы то, чего на странице нет.
 if(PERS)EXPL.kids.splice(2,0,['Личные списания',
@@ -1471,10 +1513,12 @@ const promHtml=PROM.length?`<h2>Обещано, но ещё не оплачен�
   ${p.note?`<div class="row-b"><div class="sum">${esc(p.note)}</div></div>`:''}</div>`).join('')}
  </div><h2>Уже потрачено</h2>`:'';
 
+// Режим «Ушло». spendsHtml() собирает разметку для заданной группировки: один раз
+// для экрана (текущая SGROUP, с чипами) и один раз для печати - по направлениям
+// и без чипов, см. m-print.
 let SGROUP='date';
-function renderSpends(){
- const el=document.getElementById('pane-spends');
- if(!D.spends.length){el.innerHTML=promHtml+'<div class="empty">Пока не потрачено ни рубля.</div>';return;}
+function spendsHtml(SGROUP, withChips){
+ if(!D.spends.length)return promHtml+'<div class="empty">Пока не потрачено ни рубля.</div>';
  const key=e=>SGROUP==='date'?e.date:(SGROUP==='cat'?e.cat:e.sbor);
  const order=[...D.spends];
  // Дата сравнивается как ГГГГММДД, а не строкой «ДД.ММ.ГГГГ»: посимвольно первым
@@ -1487,11 +1531,12 @@ function renderSpends(){
  order.forEach(e=>{let g=gs[gs.length-1];
   if(!g||g.k!==key(e)){g={k:key(e),items:[],sum:0};gs.push(g);}
   g.items.push(e); g.sum+=e.amount;});
- const chips=[['date','По датам'],['cat','По направлениям'],['sbor','По сборам']].map(([k,l])=>
-  `<button class="chip" data-sg="${k}" aria-pressed="${k===SGROUP}">${l}</button>`).join('');
+ const chips=!withChips?'':`<div class="chips" id="sgroup">${
+  [['date','По датам'],['cat','По направлениям'],['sbor','По сборам']].map(([k,l])=>
+  `<button class="chip" data-sg="${k}" aria-pressed="${k===SGROUP}">${l}</button>`).join('')}</div>`;
  // Расход с комментарием раскрывается нажатием - тем же .row/.row-b, что и
  // обязательство. Без комментария тела нет, и строка не раскрывается.
- el.innerHTML=promHtml+`<div class="chips" id="sgroup">${chips}</div>
+ return promHtml+chips+`
   ${gs.map(g=>`<div class="mgroup">
    <div class="mhead">${esc(g.k)}<span${g.sum<0?' class="back"':''}>${rub(g.sum)}</span></div>
    <div class="rows">${g.items.map(e=>`<div class="row${e.comment?'':' nc'}"><div class="row-h">
@@ -1503,12 +1548,91 @@ function renderSpends(){
      <span class="chev"${e.comment?'':' style="visibility:hidden"'}>▾</span></div>
     ${e.comment?`<div class="row-b"><div class="sum">${esc(e.comment)}</div></div>`:''}</div>`).join('')}
    </div></div>`).join('')}`;
- document.getElementById('sgroup').addEventListener('click',ev=>{
+}
+function renderSpends(){
+ document.getElementById('m-out').innerHTML=spendsHtml(SGROUP,true);
+ const sg=document.getElementById('sgroup');
+ if(sg)sg.addEventListener('click',ev=>{
   const c=ev.target.closest('.chip'); if(!c)return; SGROUP=c.dataset.sg; renderSpends();});
 }
 renderSpends();
+document.getElementById('m-print').innerHTML=spendsHtml('cat',false);
 
-// Лента кассы. Смысл вкладки не в бухгалтерской форме, а в том, чтобы родитель
+// Режим «Пришло»: только взносы. Это то, чего раньше не было нигде, кроме
+// раскрытой карточки ребёнка в «По детям». Источник - pays каждого ребёнка;
+// сумма обязана сойтись с плиткой «Собрано». Возмещение сюда не входит: в
+// «Расходах» оно строка с минусом, а не взнос. Остатка здесь нет намеренно -
+// см. комментарий у pane-money.
+const PAYS=[];
+D.kids.forEach(k=>{if(k.teach)return;(k.pays||[]).forEach(p=>PAYS.push(Object.assign({name:k.name},p)));});
+const manySbor=new Set(PAYS.map(p=>p.sbor)).size>1;
+let IGROUP='date';
+function renderIn(){
+ const el=document.getElementById('m-in');
+ if(!PAYS.length){el.innerHTML='<div class="empty">Взносов пока нет.</div>';return;}
+ const dkey=s=>s.split('.').reverse().join('');
+ const chips=[['date','По датам'],['kid','По детям']].map(([k,l])=>
+  `<button class="chip" data-ig="${k}" aria-pressed="${k===IGROUP}">${l}</button>`).join('');
+ // Сбор в подписи только когда сборов больше одного: при единственном он шум.
+ const sub=p=>[esc(p.way),manySbor?esc(p.sbor):''].filter(Boolean).join(' · ');
+ const nPays=n=>`${n} ${plural(n,'платёж','платежа','платежей')}`;
+ let body;
+ if(IGROUP==='date'){
+  // Свежий день сверху, как и в «Ушло» по датам; внутри дня - по фамилии.
+  const order=[...PAYS].sort((a,b)=>dkey(b.date).localeCompare(dkey(a.date))||a.name.localeCompare(b.name,'ru'));
+  const gs=[];
+  order.forEach(p=>{let g=gs[gs.length-1];
+   if(!g||g.k!==p.date){g={k:p.date,items:[],sum:0};gs.push(g);}
+   g.items.push(p); g.sum+=p.amount;});
+  body=gs.map(g=>`<div class="mgroup">
+   <div class="mhead">${esc(g.k)}<span>${rub(g.sum)} · ${nPays(g.items.length)}</span></div>
+   <div class="rows">${g.items.map(p=>`<div class="row${p.note?'':' nc'}"><div class="row-h">
+     <span class="pm">${esc(p.name)}${sub(p)?`<span class="sub">${sub(p)}</span>`:''}</span>
+     <span class="amt">${rub(p.amount)}</span>
+     <span class="chev"${p.note?'':' style="visibility:hidden"'}>▾</span></div>
+    ${p.note?`<div class="row-b"><div class="sum">${esc(p.note)}</div></div>`:''}</div>`).join('')}
+   </div></div>`).join('');
+ }else{
+  // По детям: строка - ребёнок, сумма, число платежей; раскрытие - даты и суммы.
+  // Порядок по фамилии, как в списке класса.
+  const by=new Map();
+  PAYS.forEach(p=>{if(!by.has(p.name))by.set(p.name,[]); by.get(p.name).push(p);});
+  const names=[...by.keys()].sort((a,b)=>a.localeCompare(b,'ru'));
+  body=`<div class="rows">${names.map(n=>{
+   const ps=by.get(n).slice().sort((a,b)=>dkey(a.date).localeCompare(dkey(b.date)));
+   const sum=ps.reduce((s,p)=>s+p.amount,0);
+   return `<div class="row"><div class="row-h">
+     <span class="pm">${esc(n)}<span class="sub">${nPays(ps.length)}</span></span>
+     <span class="amt">${rub(sum)}</span><span class="chev">▾</span></div>
+    <div class="row-b"><div class="pays">${ps.map(p=>`<div class="pay"><span class="tag">${esc(p.date)}</span>
+     <span>${sub(p)}</span><span class="amt">${rub(p.amount)}</span></div>${
+     p.note?`<div class="pcm">${esc(p.note)}</div>`:''}`).join('')}</div></div></div>`;}).join('')}</div>`;
+ }
+ el.innerHTML=`<div class="chips" id="igroup">${chips}</div>${body}`;
+ document.getElementById('igroup').addEventListener('click',ev=>{
+  const c=ev.target.closest('.chip'); if(!c)return; IGROUP=c.dataset.ig; renderIn();});
+}
+renderIn();
+
+// Переключатель режимов. Панели режимов живут внутри одной вкладки и переключаются
+// как вкладки - hidden, - но состояние своё: уход на другую вкладку его не сбрасывает.
+let MODE='flow';
+function setMode(m){
+ if(!document.getElementById('m-'+m))m='out';   // Ленты нет - см. ниже, у FLOW
+ MODE=m;
+ document.querySelectorAll('#mmode .chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.mode===m)));
+ ['flow','out','in'].forEach(n=>{const el=document.getElementById('m-'+n); if(el)el.hidden=(n!==m);});
+}
+document.getElementById('mmode').addEventListener('click',e=>{
+ const c=e.target.closest('.chip[data-mode]'); if(c)setMode(c.dataset.mode);});
+// Плитка ведёт в «Деньги» и в свой режим; полоса вкладок при этом поднимается
+// к верху экрана, иначе после нажатия на плитку видно только её же.
+function goMoney(mode){
+ selectTab(document.getElementById('tab-money')); setMode(mode);
+ window.scrollTo({top:document.getElementById('navtop').offsetTop-8});
+}
+
+// Лента кассы (режим «Лента»). Смысл не в бухгалтерской форме, а в том, чтобы родитель
 // пришёл к остатку из шапки сам, не принимая его на веру: «собрано» и «потрачено»
 // лежат в разных списках, и свести их иначе нечем. Отсюда всё устройство: порядок
 // строго хронологический, снизу вверх ничего не сортируется и не переставляется,
@@ -1516,10 +1640,11 @@ renderSpends();
 // проверена на сборке (см. tools/build_report.py) и в tools/verify.py.
 const FLOW=D.flow||[];
 if(!FLOW.length){
- // Журнал без листа «Движение» - прошлогодний. Пятой вкладке тогда неоткуда
- // взяться, и пустой она висеть не должна: её просто нет.
- ['nav button[data-tab=flow]','#pane-flow','#ex-flow'].forEach(sel=>{
+ // Журнал без листа «Движение» - прошлогодний. Ленте тогда неоткуда взяться, и
+ // пустой она висеть не должна: режима просто нет, «Деньги» открываются на «Ушло».
+ ['#m-flow','#mmode .chip[data-mode=flow]'].forEach(sel=>{
   const el=document.querySelector(sel); if(el)el.remove();});
+ setMode('out');
 }else{
  const fg=[];
  FLOW.forEach(f=>{const [d,m,y]=f.date.split('.').map(Number);
@@ -1532,7 +1657,7 @@ if(!FLOW.length){
  // лента перестанет читаться. Строки ВНУТРИ месяца не переворачиваются: остаток
  // нарастает сверху вниз, и последняя строка блока совпадает с остатком в его
  // заголовке. Перевернуть и их - накопление читалось бы задом наперёд.
- document.getElementById('pane-flow').innerHTML=fg.slice().reverse().map((g,i)=>{
+ document.getElementById('m-flow').innerHTML=fg.slice().reverse().map((g,i)=>{
   const open=i===0;
   return `<div class="mvm">
    <button class="btn mvh" data-toggle="fm${i}" aria-expanded="${open}">
@@ -1563,9 +1688,8 @@ function selectTab(tab){
   // Крайняя вкладка на узком экране видна не целиком. Нажали по её краю - полоса
   // подтягивает её к себе, иначе выбранной оказывается кнопка, которую не видно.
   tab.scrollIntoView({block:'nearest',inline:'nearest'});
-  // Вкладки перечислены здесь, а не собираются из nav: «Пришло и ушло» удаляется
-  // из nav, когда листа «Движение» в журнале нет, и её панель уходит вместе с ней.
-  ['bdays','sbory','kids','spends','flow'].forEach(n=>{
+  // Панели перечислены явно: у каждой вкладки своя панель pane-* и пояснение ex-*.
+  ['bdays','sbory','kids','money'].forEach(n=>{
    const pn=document.getElementById('pane-'+n); if(pn)pn.hidden=(n!==tab.dataset.tab);
    const ex=document.getElementById('ex-'+n); if(ex)ex.hidden=(n!==tab.dataset.tab);});
   // «Как это считается» сворачивается при уходе с вкладки: вернувшись, человек
@@ -1576,8 +1700,8 @@ function selectTab(tab){
   const a=document.getElementById('navtop');
   if(window.scrollY>a.offsetTop-8)window.scrollTo({top:a.offsetTop-8});
 }
-// Список кнопок берётся заново при каждом нажатии, а не один раз: вкладка
-// «Пришло и ушло» удаляется из nav, когда листа «Движение» нет.
+// Список кнопок берётся из nav при каждом нажатии, а не один раз: так он не
+// зависит от того, какие вкладки в этой сборке есть.
 document.querySelector('nav').addEventListener('keydown',e=>{
  const tabs=[...document.querySelectorAll('nav button')], i=tabs.indexOf(document.activeElement);
  if(i<0)return;
