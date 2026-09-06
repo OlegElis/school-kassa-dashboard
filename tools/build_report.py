@@ -523,6 +523,11 @@ PAGE = r"""<!DOCTYPE html>
                padding:11px 18px;border-radius:9px;cursor:pointer;min-height:44px;}
  .gerr{color:var(--bad);font-size:13.5px;margin-top:10px;min-height:18px;}
  html{scroll-behavior:smooth;}
+ /* Плавная прокрутка при смене вкладки и поворот шеврона - единственная анимация
+    на странице; кто просил меньше движения, получает мгновенный переход. */
+ @media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto;} .chev{transition:none;}
+ }
  /* Резерв под полосу прокрутки нужен только мыши: он держит контент на месте при
     смене вкладок. На тач-экранах scrollbar-gutter не поддерживается, а overflow-y
     на html ломает инерционную прокрутку и даёт второй скролл-контейнер. */
@@ -540,7 +545,7 @@ PAGE = r"""<!DOCTYPE html>
  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;}
  .tiles.c3{grid-template-columns:repeat(3,1fr);}
  .tile{background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:11px 12px;}
- .tile .lab{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;}
+ .tile .lab{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;}
  .tile .val{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;}
  .tile .tnote{font-size:11.5px;color:var(--dim);margin-top:4px;}
  .tile.rest{border-color:var(--good);} .tile.rest .val{color:var(--good);}
@@ -584,7 +589,7 @@ PAGE = r"""<!DOCTYPE html>
  .code.sm{font-size:10px;padding:2px 5px;}
  .code{flex:none;font-size:11px;font-weight:700;color:var(--accent);background:#eef2fa;
        border-radius:6px;padding:3px 7px;margin-top:2px;}
- h3{font-size:16px;margin:0;} .meta{color:var(--dim);font-size:12.5px;margin-top:3px;}
+ .card-top h2{margin:0;color:var(--ink);} .meta{color:var(--dim);font-size:12.5px;margin-top:3px;}
  /* График платежей. Разделитель «·» лежит ВНУТРИ шага и попадает под его nowrap,
     поэтому при переносе точка уезжает вместе со своим шагом и не начинает строку,
     а сам шаг не разрывается посередине. */
@@ -713,7 +718,7 @@ PAGE = r"""<!DOCTYPE html>
  .sh.due{flex:none;width:84px;justify-content:flex-end;text-align:right;}
  .sh.bal{flex:none;width:84px;padding-left:6px;justify-content:flex-end;}
  .pays{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;}
- .pays-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);
+ .pays-h{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);
          font-weight:700;margin-bottom:4px;}
  .pay{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:3px 0;}
  .pay .pd{flex:none;font-variant-numeric:tabular-nums;font-weight:600;}
@@ -749,7 +754,7 @@ PAGE = r"""<!DOCTYPE html>
  .row.open .row-b{background:#fbfcfe;border-radius:0 0 8px 8px;}
  .hero{background:var(--bg);border:1px solid #e3c26b;border-radius:11px;padding:12px 14px;
         margin-bottom:14px;}
- .hero .lab{display:block;font-size:10.5px;color:var(--warn);text-transform:uppercase;
+ .hero .lab{display:block;font-size:11.5px;color:var(--warn);text-transform:uppercase;
             letter-spacing:.05em;font-weight:700;margin-bottom:6px;}
  /* Карточка «Ближайшего месяца» - текстовый блок, а не флекс-строка. Во флексе
     заголовок был отдельной колонкой между меткой и отсчётом: длинный
@@ -789,9 +794,9 @@ PAGE = r"""<!DOCTYPE html>
  @media(min-width:560px){.cal{grid-template-columns:repeat(3,minmax(0,1fr));}}
  .m{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px 10px;}
  .m.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
- .m h4{margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+ .m h2{margin:0 0 5px;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;
        color:var(--accent);font-weight:700;}
- .m.mt h4{color:#b6bcc7;}
+ .m.mt h2{color:#b6bcc7;}
  .m ul{list-style:none;margin:0;padding:0;font-size:12.5px;}
  .m li{display:flex;gap:6px;padding:2px 0;align-items:baseline;}
  .m li b{flex:none;min-width:17px;font-variant-numeric:tabular-nums;color:var(--dim);font-weight:600;}
@@ -804,7 +809,7 @@ PAGE = r"""<!DOCTYPE html>
  /* Событие мимо кассы - зелёным: красный уже занят сроком платежа, синий -
     мероприятием сбора, и третьей денежной строке нельзя читаться как первые две. */
  .m li.l-plan b,.m li.l-plan span{color:var(--good);}
- .k{font-size:10px;text-transform:uppercase;letter-spacing:.03em;border-radius:20px;
+ .k{font-size:11px;text-transform:uppercase;letter-spacing:.03em;border-radius:20px;
     padding:1px 7px;border:1px solid var(--line);color:var(--dim);}
  .k-due{color:var(--bad);border-color:#f3c9c6;} .k-event{color:var(--accent);border-color:#c9d6ee;}
  .k-plan{color:var(--good);border-color:#bcdcd8;}
@@ -938,14 +943,23 @@ PAGE = r"""<!DOCTYPE html>
     <img class="logo" src="assets/logo.svg" width="40" height="40" alt="">
     <div class="gname">Касса класса 2В</div>
    </div>
-   <h2 class="gh">Доступ по коду</h2>
+   <h1 class="gh">Доступ по коду</h1>
    <p class="gp">Отчёт закрыт от посторонних. Введите код, который дала Аня.</p>
-   <form id="gform" autocomplete="on">
-    <input id="gpass" type="password" name="password" autocomplete="current-password"
+   <!-- У поля нет name, у формы стоит onsubmit="return false" - и это две разные
+        защиты. Если скрипт не выполнился (JS выключен, старый браузер споткнулся
+        о синтаксис), кнопка «Открыть» отправила бы форму по-настоящему: GET на тот
+        же адрес, и код доступа оказался бы в строке запроса - в истории браузера
+        и в логах GitHub. name закрывает попадание кода в запрос, onsubmit - саму
+        отправку. Автозаполнение держится на id и autocomplete, name ему не нужен. -->
+   <form id="gform" autocomplete="on" onsubmit="return false">
+    <input id="gpass" type="password" autocomplete="current-password"
            placeholder="код" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button type="submit">Открыть</button>
    </form>
    <div class="gerr" id="gerr"></div>
+   <noscript><p class="gerr">Отчёт открывается только при включённом JavaScript:
+    расшифровка идёт прямо в браузере, без неё показать нечего. Включите JavaScript
+    и обновите страницу.</p></noscript>
   </div>
  </div>
 <div class="wrap" id="app" hidden>
@@ -966,28 +980,38 @@ PAGE = r"""<!DOCTYPE html>
   пересобирают. Календарь событий и дней рождения ниже - живой, он считает дни
   от сегодняшнего дня.</p>
  <span id="navtop"></span>
+ <!-- Вкладки - полный паттерн tablist: в порядке Tab стоит только выбранная
+      (tabindex), между остальными ходят стрелки, стрелки и tabindex ведёт
+      selectTab() в скрипте. Панель пояснения «Как это считается» живёт отдельно
+      от панели вкладки, поэтому в aria-controls перечислены обе. -->
  <nav role="tablist">
-  <button role="tab" data-tab="bdays" aria-selected="true">События</button>
-  <button role="tab" data-tab="sbory" aria-selected="false">Сборы</button>
-  <button role="tab" data-tab="kids" aria-selected="false">По детям</button>
-  <button role="tab" data-tab="spends" aria-selected="false">Расходы</button>
-  <button role="tab" data-tab="flow" aria-selected="false">Пришло и ушло</button>
+  <button role="tab" id="tab-bdays" data-tab="bdays" aria-selected="true" tabindex="0"
+          aria-controls="pane-bdays ex-bdays">События</button>
+  <button role="tab" id="tab-sbory" data-tab="sbory" aria-selected="false" tabindex="-1"
+          aria-controls="pane-sbory ex-sbory">Сборы</button>
+  <button role="tab" id="tab-kids" data-tab="kids" aria-selected="false" tabindex="-1"
+          aria-controls="pane-kids">По детям</button>
+  <button role="tab" id="tab-spends" data-tab="spends" aria-selected="false" tabindex="-1"
+          aria-controls="pane-spends ex-spends">Расходы</button>
+  <button role="tab" id="tab-flow" data-tab="flow" aria-selected="false" tabindex="-1"
+          aria-controls="pane-flow ex-flow">Пришло и ушло</button>
  </nav>
- <div id="pane-bdays"></div>
+ <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays"></div>
  <div class="expl" id="ex-bdays"></div>
- <div id="pane-sbory" hidden></div>
+ <div id="pane-sbory" role="tabpanel" aria-labelledby="tab-sbory" hidden></div>
  <div class="expl" id="ex-sbory" hidden></div>
- <div id="pane-kids" hidden>
-  <input class="search" id="q" type="search" placeholder="__SEARCHPH__" autocomplete="off">
+ <div id="pane-kids" role="tabpanel" aria-labelledby="tab-kids" hidden>
+  <input class="search" id="q" type="search" placeholder="__SEARCHPH__" autocomplete="off"
+         aria-label="Поиск по фамилии или имени">
   <div class="chips" id="chips"></div>
   <div id="kidlist"></div>
   <div id="kidext"></div>
   <div class="hint" id="kidhint"></div>
   <div class="expl" id="ex-kids"></div>
  </div>
- <div id="pane-spends" hidden></div>
+ <div id="pane-spends" role="tabpanel" aria-labelledby="tab-spends" hidden></div>
  <div class="expl" id="ex-spends" hidden></div>
- <div id="pane-flow" hidden></div>
+ <div id="pane-flow" role="tabpanel" aria-labelledby="tab-flow" hidden></div>
  <div class="expl" id="ex-flow" hidden></div>
 
  <footer>Сформировано __ASOF__ автоматически из журнала «Касса_2В_2026-2027.xlsx».
@@ -1159,7 +1183,7 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
  }
  return `<section class="card">
   <div class="card-top">${s.code?`<span class="code">${esc(s.code)}</span>`:''}
-   <div><h3>${esc(s.title)}</h3><div class="meta">${meta.join(' · ')}</div></div></div>
+   <div><h2>${esc(s.title)}</h2><div class="meta">${meta.join(' · ')}</div></div></div>
   ${schedHtml}
   ${s.plan?`<div class="bar"><i style="width:${pct}%"></i></div>
    <div class="barlab"><span>собрано ${rub(s.collected)} из ${rub(s.plan)}</span><span>${pct}%</span></div>`:''}
@@ -1380,7 +1404,7 @@ document.getElementById('pane-bdays').innerHTML=ALL.length?`
  <div class="cal">${order.map(m=>{
    const items=byMonth[m]||[];
    return `<div class="m${m===curM?' cur':''}${items.length?'':' mt'}">
-    <h4>${MONT[m]}</h4>
+    <h2>${MONT[m]}</h2>
     ${items.length?`<ul>${items.map(e=>`<li class="${e.in<=14?'soon':''} l-${e.kind}"${
       e.note?` title="${esc(e.note)}"`:''}>
       <b>${dd(e.d)}</b><span>${esc(e.name)}${e.amt?` - ${esc(e.amt)}`:''}</span></li>`).join('')}</ul>`
@@ -1529,9 +1553,12 @@ if(!FLOW.length){
     одного дня, сведённые в одну: по именам они разложены во вкладке «По детям».</div>`;
 }
 
-document.addEventListener('click',e=>{
- const tab=e.target.closest('nav button');
- if(tab){document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-selected',String(b===tab)));
+// Выбор вкладки вынесен из обработчика клика: с клавиатуры сюда приходят стрелки.
+// tabindex раздаётся здесь же, чтобы в порядке Tab всегда стояла ровно одна кнопка -
+// выбранная; остальные достижимы стрелками, как и положено tablist.
+function selectTab(tab){
+ document.querySelectorAll('nav button').forEach(b=>{const on=b===tab;
+  b.setAttribute('aria-selected',String(on)); b.tabIndex=on?0:-1;});
   // Крайняя вкладка на узком экране видна не целиком. Нажали по её краю - полоса
   // подтягивает её к себе, иначе выбранной оказывается кнопка, которую не видно.
   tab.scrollIntoView({block:'nearest',inline:'nearest'});
@@ -1547,7 +1574,21 @@ document.addEventListener('click',e=>{
    if(b)b.setAttribute('aria-expanded','false');});
   const a=document.getElementById('navtop');
   if(window.scrollY>a.offsetTop-8)window.scrollTo({top:a.offsetTop-8});
-  return;}
+}
+// Список кнопок берётся заново при каждом нажатии, а не один раз: вкладка
+// «Пришло и ушло» удаляется из nav, когда листа «Движение» нет.
+document.querySelector('nav').addEventListener('keydown',e=>{
+ const tabs=[...document.querySelectorAll('nav button')], i=tabs.indexOf(document.activeElement);
+ if(i<0)return;
+ let j; if(e.key==='ArrowRight')j=(i+1)%tabs.length;
+ else if(e.key==='ArrowLeft')j=(i-1+tabs.length)%tabs.length;
+ else if(e.key==='Home')j=0; else if(e.key==='End')j=tabs.length-1; else return;
+ e.preventDefault(); tabs[j].focus(); selectTab(tabs[j]);
+});
+
+document.addEventListener('click',e=>{
+ const tab=e.target.closest('nav button');
+ if(tab){selectTab(tab);return;}
  const btn=e.target.closest('.btn[data-toggle]');
  if(btn){const p=document.getElementById(btn.dataset.toggle);
   // «Участники» и «Расходы» в одной карточке взаимоисключающи. Область поиска -
@@ -1586,6 +1627,14 @@ document.addEventListener('click',e=>{
   document.getElementById('app').hidden=false; boot(RAW); return;}
  const g=document.getElementById('gate'), f=document.getElementById('gform'),
        inp=document.getElementById('gpass'), err=document.getElementById('gerr');
+ // Без WebCrypto расшифровать нечем. Проверка стоит до формы: иначе падение
+ // importKey ловил бы общий catch ниже, и родитель читал бы «Неверный код»,
+ // перебирая правильный код в браузере, который просто не умеет расшифровывать.
+ if(!(window.crypto&&crypto.subtle&&crypto.subtle.deriveKey)){
+  f.classList.add('busy'); inp.disabled=true;
+  err.textContent='Этот браузер не умеет расшифровывать отчёт - дело не в коде. '+
+   'Откройте страницу в современном Safari или Chrome либо обновите браузер.';
+  return;}
  f.addEventListener('submit', async ev=>{
   ev.preventDefault(); err.textContent=''; f.classList.add('busy');
   try{

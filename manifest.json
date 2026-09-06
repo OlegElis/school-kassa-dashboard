@@ -2,7 +2,7 @@
   "name": "Касса класса 2В",
   "short_name": "Касса 2В",
   "lang": "ru",
-  "display": "standalone",
+  "display": "browser",
   "start_url": "./",
   "theme_color": "#2f5496",
   "background_color": "#2f5496",
