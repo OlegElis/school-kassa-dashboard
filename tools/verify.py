@@ -199,6 +199,30 @@ def leak_check(html, data, spisok):
           f"имя из журнала попало на страницу - {'; '.join(leaked)}")
 
 
+def gate_check(html):
+    """Ворота: код доступа не должен уходить в строку запроса.
+
+    Форма ввода кода живёт без скрипта ровно до того момента, как он выполнится.
+    Если JS выключен или блок упал на старом браузере, кнопка «Открыть» отправляет
+    форму по-настоящему - GET на тот же адрес. Два атрибута закрывают это порознь:
+    у поля нет name - кода нет в запросе; у формы onsubmit="return false" - нет
+    самой отправки. Правка шаблона в генераторе может вернуть любой из них, и
+    сборка прошла бы молча; поэтому проверяется собранный файл.
+    """
+    form = re.search(r'<form id="gform"[^>]*>', html)
+    field = re.search(r'<input id="gpass"[^>]*>', html)
+    check(field is not None and ' name=' not in field.group(0),
+          "у поля кода нет name: код не попадёт в строку запроса",
+          "у поля кода #gpass есть name - без JS кнопка «Открыть» отправит форму "
+          "GET-запросом и код доступа окажется в адресе (…/?password=КОД): в истории "
+          "браузера, в логах GitHub и в реферере. Уберите name в tools/build_report.py")
+    check(form is not None and 'onsubmit="return false"' in form.group(0),
+          'у формы стоит onsubmit="return false": отправка закрыта',
+          'у формы #gform нет onsubmit="return false" - при упавшем скрипте форма '
+          "уйдёт GET-запросом на тот же адрес, и любое именованное поле утечёт в "
+          "строку запроса. Верните onsubmit в tools/build_report.py")
+
+
 def plural(n, one, few, many):
     """Форма слова по числу: «1 операция», «2 операции», «5 операций»."""
     a, b = n % 10, n % 100
@@ -413,6 +437,8 @@ def main():
     found = [mk for mk in PLAIN_MARKERS if mk in html]
     check(not found, "открытых данных payload в файле нет",
           f"payload лежит в открытом виде: {', '.join(found)}")
+
+    gate_check(html)
 
     print("\nСлужебные пометки")
     marks = find_marks(data)
