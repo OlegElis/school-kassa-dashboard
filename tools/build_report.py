@@ -490,13 +490,18 @@ for s in sbory:
         # Отдельного события «полная сумма» больше нет: последний платёж - это просто
         # последний шаг графика, а не самостоятельный показатель.
         for step in s["sched"]:
+            # short - для клетки календаря: сбор в классе один, и хвост с его названием
+            # в узкой клетке только обрезал сумму. Полный заголовок остаётся в
+            # «Ближайшем месяце», там места хватает.
             EVENTS.append({"date": step["date"], "kind": "due", "code": s["code"],
-                           "title": f'Внести {money(step["amount"])} \u20bd - {s["title"]}'})
+                           "title": f'Внести {money(step["amount"])} \u20bd - {s["title"]}',
+                           "short": f'Внести {money(step["amount"])} \u20bd'})
     elif s["due"] and s["first"]:
         # запасной путь: сбора нет на листе «График». Сбор без объявленной суммы
         # срока не имеет - иначе в календаре появляется «Внести 0 ₽».
         EVENTS.append({"date": s["due"], "kind": "due", "code": s["code"],
-                       "title": f'Внести {money(s["first"])} \u20bd - {s["title"]}'})
+                       "title": f'Внести {money(s["first"])} \u20bd - {s["title"]}',
+                       "short": f'Внести {money(s["first"])} \u20bd'})
     if s["event"]:
         EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
                        "title": s["title"]})
@@ -520,6 +525,11 @@ EVENTS += plans
 # могут пользоваться старшие братья и сёстры. В шифрованный payload расписание
 # не кладётся - оно не тайна, и в верификацию как данные не идёт. В печать блок
 # не выводится (см. @media print).
+#
+# На страницу уходит JSON (минуты от полуночи), а плашку «Сейчас в школе» и
+# таблицу рисует скрипт: какой урок идёт, зависит от живых часов читателя, и
+# считать это в генераторе нельзя. Школьный пояс - UTC+7 (Кольцово, Новосибирск),
+# см. SCHOOL_TZ в скрипте страницы.
 BELLS_SOURCE = "Приказ директора от 01.09.2026"
 BELLS = (
     ("Понедельник - пятница", (
@@ -553,22 +563,19 @@ def _bells_check():
             prev_end = mins(b)
 
 
-def _bells_html():
-    """Свёрнутый по умолчанию <details>: раскрывается нажатием без скрипта,
-    поэтому работает и до расшифровки скриптом, и при любой ошибке в нём."""
-    cols = []
-    for day, lessons in BELLS:
-        rows = "".join(f'<li><b>{i}</b><span>{a}</span><i>-</i><span>{b}</span></li>'
-                       for i, (a, b) in enumerate(lessons, 1))
-        cols.append(f'<div class="m"><h2>{day}</h2><ol>{rows}</ol></div>')
-    return ('<details class="bells" id="bells">'
-            '<summary><span>Расписание звонков</span><span class="chev">\u25be</span></summary>'
-            f'<p class="bells-src">{BELLS_SOURCE}. Урок - 40 минут.</p>'
-            f'<div class="bells-g">{"".join(cols)}</div></details>')
+def _bells_json():
+    """[0] - будни, [1] - суббота; уроки парами минут от полуночи. Порядок дней
+    в BELLS и здесь один и тот же, скрипт страницы на него опирается."""
+    def mins(t):
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
+    return json.dumps({"src": BELLS_SOURCE,
+                       "days": [{"title": day, "lessons": [[mins(a), mins(b)] for a, b in lessons]}
+                                for day, lessons in BELLS]}, ensure_ascii=False)
 
 
 _bells_check()
-BELLS_HTML = _bells_html()
+BELLS_JSON = _bells_json()
 DATA = json.dumps({"t": totals, "events": EVENTS, "sbory": sbory,
                    "spends": all_spends, "promises": promises, "flow": flow,
                    "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
@@ -654,7 +661,12 @@ PAGE = r"""<!DOCTYPE html>
  nav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;background:var(--bg);
      border:1px solid var(--line);
      border-radius:11px;padding:5px;margin-bottom:16px;position:sticky;top:8px;z-index:5;
-     box-shadow:0 2px 10px rgba(22,24,29,.06);
+     /* Вторая тень - непрозрачная, цвета страницы, поднята на 8 px с таким же
+        расширением: закрывает просвет между верхом экрана и полосой (top:8px),
+        в котором при прокрутке выглядывали чипы фильтров. Псевдоэлементом это
+        не сделать - overflow-x:auto обрезал бы его; тень элемент не обрезает.
+        Ниже полосы тень не выходит: смещение и расширение гасят друг друга. */
+     box-shadow:0 2px 10px rgba(22,24,29,.06),0 -8px 0 8px var(--soft);
      scrollbar-width:none;-ms-overflow-style:none;overscroll-behavior-x:contain;}
  nav::-webkit-scrollbar{display:none;}
  /* Четыре вкладки в строку на телефоне помещаются; пятая («Пришло и ушло», до
@@ -894,7 +906,11 @@ PAGE = r"""<!DOCTYPE html>
  .hero-i .pn b{color:var(--ink);font-weight:600;white-space:nowrap;}
  /* minmax(0,1fr), а не 1fr: у 1fr минимум - min-content, и длинное название события
     («Полная сумма 5000 ₽ - Учебный год 2026/2027») растягивало колонку шире экрана. */
- .cal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+ /* До 480 px - одна колонка месяцев: в двух на 390 px почти каждая запись
+    обрезалась («Театр в школе - 30…», «Парначёв Владис…»). Двенадцать карточек
+    друг под другом длиннее, но читаемы. */
+ .cal{display:grid;grid-template-columns:1fr;gap:8px;}
+ @media(min-width:481px){.cal{grid-template-columns:repeat(2,minmax(0,1fr));}}
  @media(min-width:560px){.cal{grid-template-columns:repeat(3,minmax(0,1fr));}}
  .m{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px 10px;}
  .m.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
@@ -904,8 +920,10 @@ PAGE = r"""<!DOCTYPE html>
  .m ul{list-style:none;margin:0;padding:0;font-size:12.5px;}
  .m li{display:flex;gap:6px;padding:2px 0;align-items:baseline;}
  .m li b{flex:none;min-width:17px;font-variant-numeric:tabular-nums;color:var(--dim);font-weight:600;}
- /* min-width:0 - иначе flex-элемент не сжимается и ellipsis не срабатывает. */
- .m li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+ /* Не помещается - переносится на вторую строку, а не режется многоточием:
+    обрезанное имя или название события ничего не говорит. min-width:0 - иначе
+    flex-элемент не сжимается и текст вылезал бы за клетку. */
+ .m li span{min-width:0;overflow-wrap:anywhere;}
  .m li.soon b,.m li.soon span{color:var(--warn);font-weight:700;}
  .m li i{font-style:normal;color:var(--dim);font-size:11px;}
  .m li.l-due b,.m li.l-due span{color:var(--bad);} .m li.l-due{font-weight:600;}
@@ -922,26 +940,53 @@ PAGE = r"""<!DOCTYPE html>
  .k-plan{color:var(--good);border-color:#bcdcd8;}
  .k-kassa{color:var(--kassa);border-color:#d9cdf0;}
  .m .none{color:#c9ced7;font-size:12.5px;}
- /* Расписание звонков - под календарём, свёрнуто. Нативный <details>: раскрытие
-    без скрипта. Маркер браузера убран и заменён общим шевроном страницы. Высота
-    заголовка не меньше 44 px - цель для пальца. */
- .bells{background:var(--bg);border:1px solid var(--line);border-radius:11px;margin-top:14px;}
- .bells summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;
-                align-items:center;padding:11px 14px;font-size:14.5px;font-weight:700;
-                color:var(--accent);border-radius:11px;}
+ /* «Сейчас в школе» - плашка над «Ближайшим месяцем» и одновременно summary
+    нативного <details>: нажатие раскрывает таблицу звонков. Маркер браузера
+    убран, шеврон стоит у подписи. Высота не меньше 44 px - цель для пальца. */
+ .bells{background:var(--bg);border:1px solid var(--line);border-radius:11px;margin-bottom:14px;}
+ .bells summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;
+                padding:10px 14px;min-height:44px;border-radius:11px;}
  .bells summary::-webkit-details-marker{display:none;}
- .bells summary .chev{color:var(--dim);}
- .bells[open] summary .chev{transform:rotate(180deg);}
- .bells-src{margin:0 14px 10px;font-size:12.5px;color:var(--dim);}
- /* Один столбец на телефоне, два рядом от 560 px - как у календаря. */
- .bells-g{display:grid;grid-template-columns:1fr;gap:8px;padding:0 10px 10px;}
- @media(min-width:560px){.bells-g{grid-template-columns:repeat(2,minmax(0,1fr));}}
+ .sc-t{flex:1 1 auto;min-width:0;}
+ .sc-t .lab{display:block;font-size:11.5px;color:var(--dim);text-transform:uppercase;
+            letter-spacing:.05em;font-weight:700;margin-bottom:2px;}
+ .sc-t .lab .chev{margin-left:4px;}
+ .bells[open] .lab .chev{transform:rotate(180deg);}
+ .sc-big{display:block;font-size:17px;font-weight:700;line-height:1.3;color:var(--ink);}
+ .sc-small{display:block;font-style:normal;font-size:12.5px;color:var(--dim);
+           line-height:1.4;margin-top:2px;}
+ /* Кольцо: сколько урока (или перемены) прошло, внутри - номер урока. Дуга
+    начинается сверху: поворот на -90°, длина окружности 2π·18 ≈ 113.1. */
+ .ring{flex:none;width:46px;height:46px;}
+ .ring.off{display:none;}
+ .ring circle{fill:none;stroke-width:4;}
+ .ring .tr{stroke:var(--track);}
+ .ring .pr{stroke:var(--accent);stroke-linecap:round;stroke-dasharray:0 113.1;
+           transform:rotate(-90deg);transform-origin:50% 50%;}
+ .ring text{font-size:16px;font-weight:700;fill:var(--ink);text-anchor:middle;
+            dominant-baseline:central;font-variant-numeric:tabular-nums;}
+ .bells-b{padding:0 10px 10px;}
+ .bells-src{margin:8px 4px 0;font-size:12.5px;color:var(--dim);}
+ /* Один график на экране; второй - за строкой «показать», и тогда на широком
+    экране они встают рядом. */
+ .bells-g{display:grid;grid-template-columns:1fr;gap:8px;}
+ @media(min-width:560px){.bells-g.two{grid-template-columns:repeat(2,minmax(0,1fr));}}
  .bells ol{list-style:none;margin:0;padding:0;font-size:13.5px;font-variant-numeric:tabular-nums;}
  .bells li{display:grid;grid-template-columns:24px 5.5ch 1ch 5.5ch;gap:0 4px;
-           padding:2px 0;align-items:baseline;}
+           padding:3px 6px;margin:0 -6px;align-items:baseline;border-radius:6px;}
  .bells li b{color:var(--dim);font-weight:600;}
  .bells li span:first-of-type{text-align:right;}
  .bells li i{font-style:normal;color:var(--dim);text-align:center;}
+ /* Текущий урок подсвечен, прошедшие приглушены; уроки после седьмого и второй
+    график скрыты до нажатия. */
+ .bells li.past{opacity:.45;}
+ .bells li.now{background:#eef2fa;color:var(--accent);font-weight:700;}
+ .bells li.now b{color:var(--accent);}
+ .bells li.hid{display:none;} .bells .m.all li.hid{display:grid;}
+ .bells .m.alt[hidden]{display:none;}
+ .lnk{border:0;background:none;font:inherit;font-size:13px;color:var(--accent);
+      cursor:pointer;padding:8px 6px;margin:2px -6px 0;min-height:36px;text-align:left;}
+ .lnk:hover{text-decoration:underline;}
  .mgroup{margin-bottom:12px;}
  .mhead{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;
         color:var(--accent);margin:0 0 6px 2px;text-transform:uppercase;letter-spacing:.03em;}
@@ -1126,11 +1171,27 @@ PAGE = r"""<!DOCTYPE html>
   <button role="tab" id="tab-money" data-tab="money" aria-selected="false" tabindex="-1"
           aria-controls="pane-money ex-money">Деньги</button>
  </nav>
- <!-- Календарь скрипт рисует в #bd-cal, а не в саму панель: панель хранит ещё
-      расписание звонков - статичный блок из генератора, который innerHTML стёр бы. -->
+ <!-- Календарь скрипт рисует в #bd-cal, а не в саму панель: над ним живёт плашка
+      «Сейчас в школе» со своим каркасом, который innerHTML календаря стёр бы.
+      Плашка - summary нативного <details>: нажатие на неё раскрывает таблицу
+      звонков. Текст и кольцо заполняет скрипт раз в минуту. -->
  <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays">
+  <details class="bells" id="bells">
+   <summary id="school" aria-label="Сейчас в школе; раскрыть расписание звонков">
+    <div class="sc-t">
+     <span class="lab">Сейчас в школе<span class="chev">&#9662;</span></span>
+     <b class="sc-big" id="sc-big"></b>
+     <i class="sc-small" id="sc-small"></i>
+    </div>
+    <svg class="ring" id="sc-ring" viewBox="0 0 44 44" aria-hidden="true">
+     <circle class="tr" cx="22" cy="22" r="18"/>
+     <circle class="pr" id="sc-arc" cx="22" cy="22" r="18"/>
+     <text id="sc-n" x="22" y="22"></text>
+    </svg>
+   </summary>
+   <div class="bells-b" id="bells-b"></div>
+  </details>
   <div id="bd-cal"></div>
-  __BELLS__
  </div>
  <div class="expl" id="ex-bdays"></div>
  <div id="pane-sbory" role="tabpanel" aria-labelledby="tab-sbory" hidden></div>
@@ -1538,7 +1599,7 @@ bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
 (D.events||[]).forEach(e=>{const [d,m,y]=e.date.split('.').map(Number);
  const on=new Date(y,m-1,d); if(on<NOW)return;
  ALL.push({kind:e.kind,d:d,m:m,in:Math.round((on-NOW)/86400000),name:e.title,
-  code:e.code,amt:e.amt||'',note:e.note||''});});
+  short:e.short||'',code:e.code,amt:e.amt||'',note:e.note||''});});
 ALL.sort((a,b)=>a.in-b.in);
 // «срок» - деньги в кассу, «платят сами» - мимо неё, родитель отдаёт их напрямую
 // организатору, «из кассы» - касса платит организатору и потом списывает с
@@ -1569,7 +1630,7 @@ document.getElementById('bd-cal').innerHTML=ALL.length?`
     <h2>${MONT[m]}</h2>
     ${items.length?`<ul>${items.map(e=>`<li class="${e.in<=14?'soon':''} l-${e.kind}"${
       e.note?` title="${esc(e.note)}"`:''}>
-      <b>${dd(e.d)}</b><span>${esc(e.name)}${e.amt?` - ${esc(e.amt)}`:''}</span></li>`).join('')}</ul>`
+      <b>${dd(e.d)}</b><span>${esc(e.short||e.name)}${e.amt?` - ${esc(e.amt)}`:''}</span></li>`).join('')}</ul>`
      :'<div class="none">-</div>'}</div>`;}).join('')}</div>`
  :'<div class="empty">Событий нет.</div>';
 // Нажимаемой становится только та карточка, у которой комментарий действительно
@@ -1581,6 +1642,101 @@ document.querySelectorAll('#pane-bdays .hero-i .pn').forEach(n=>{
 document.getElementById('pane-bdays').addEventListener('click',e=>{
  const n=e.target.closest('.hero-i.more'); if(n)n.classList.toggle('clip');});
 
+// «Сейчас в школе». Единственное место на странице, где важна минута, поэтому
+// у него свои живые часы: тот же источник, что у NOW календаря (часы читателя),
+// но без обнуления времени суток, и перерисовка раз в минуту.
+//
+// Считается по школьному времени, а не по часам телефона: школа в Кольцово
+// (Новосибирск), UTC+7 круглый год, а родитель может открыть страницу в поездке
+// из другого пояса. Момент берётся общий, к нему прибавляется смещение школы, и
+// дальше читаются UTC-поля даты - они и есть школьное время. Так нет зависимости
+// от перевода стрелок в поясе читателя. Если пояс телефона отличается от
+// школьного, в мелкой строке появляется «по времени школы».
+const SCHOOL_TZ=7*60;
+const BELLS=__BELLS__;
+const fmtT=m=>Math.floor(m/60)+':'+String(m%60).padStart(2,'0');
+const fmtD=m=>m>=60?Math.floor(m/60)+' ч'+(m%60?' '+m%60+' мин':''):m+' мин';
+const nth=i=>i+'-й';
+function schoolState(){
+ const n=new Date(), s=new Date(n.getTime()+SCHOOL_TZ*60000);
+ const dow=s.getUTCDay(), m=s.getUTCHours()*60+s.getUTCMinutes();
+ const foreign=n.getTimezoneOffset()!==-SCHOOL_TZ;
+ const wd=BELLS.days[0].lessons, sat=BELLS.days[1].lessons;
+ // Следующий учебный день: после субботы и в воскресенье - понедельник.
+ const nextFirst=()=>dow===6||dow===0?'в понедельник первый в '+fmtT(wd[0][0])
+  :'завтра первый в '+fmtT((dow===5?sat:wd)[0][0]);
+ const st={day:dow===6?1:0,cur:-1,past:0,ring:null,school:dow!==0,foreign:foreign,
+           at:fmtT(m)};
+ if(dow===0){
+  st.big='Выходной · '+nextFirst();
+  st.small=`будни: ${wd.length} уроков до ${fmtT(wd[wd.length-1][1])}, суббота: ${sat.length} до ${fmtT(sat[sat.length-1][1])}`;
+  return st;}
+ const L=st.day?sat:wd, last=L[L.length-1];
+ if(m<L[0][0]){
+  st.big='Первый урок в '+fmtT(L[0][0]);
+  st.small=`до начала ${fmtD(L[0][0]-m)} · сегодня ${L.length} уроков до ${fmtT(last[1])}`;
+  st.ring={frac:0,n:1}; return st;}
+ if(m>=last[1]){
+  st.big='Уроки закончились · '+nextFirst(); st.past=L.length;
+  st.small=`сегодня было ${L.length} уроков, последний до ${fmtT(last[1])}`;
+  return st;}
+ for(let i=0;i<L.length;i++){
+  const [a,b]=L[i], nx=L[i+1];
+  if(m>=a&&m<b){
+   st.cur=i; st.past=i; st.ring={frac:(m-a)/(b-a),n:i+1};
+   st.big=`${nth(i+1)} урок · до звонка ${b-m} мин`;
+   st.small=nx?`перемена ${fmtT(b)}-${fmtT(nx[0])}, потом ${nth(i+2)} урок`
+             :`последний урок, конец в ${fmtT(b)}`;
+   return st;}
+  if(nx&&m>=b&&m<nx[0]){
+   st.past=i+1; st.ring={frac:(m-b)/(nx[0]-b),n:i+2};
+   st.big=`Перемена · ${nth(i+2)} урок в ${fmtT(nx[0])}`;
+   st.small=`перемена ${fmtT(b)}-${fmtT(nx[0])} · осталось ${nx[0]-m} мин`;
+   return st;}}
+ return st;}
+function bellsTable(){
+ // Таблица: сегодняшний график целиком (текущий урок подсвечен, прошедшие
+ // приглушены), у будней уроки после седьмого - за строкой «ещё N уроков»,
+ // второй график - за строкой «показать». Второкласснику нужны первые уроки,
+ // остальные - справочно для старших братьев и сестёр.
+ const st=schoolState();
+ const card=(k,alt)=>{const d=BELLS.days[k], L=d.lessons, cut=k===0?7:L.length;
+  const showAll=!alt&&st.cur>=cut;
+  return `<div class="m${alt?' alt':''}${showAll?' all':''}"${alt?' hidden':''} data-k="${k}"><h2>${esc(d.title)}</h2><ol>${
+   L.map(([a,b],i)=>`<li class="${i>=cut?'hid ':''}${!alt&&st.school&&i===st.cur?'now':(!alt&&st.school&&i<st.past?'past':'')}"><b>${i+1}</b><span>${fmtT(a)}</span><i>-</i><span>${fmtT(b)}</span></li>`).join('')}</ol>${
+   cut<L.length?`<button type="button" class="lnk" data-more="${k}">${showAll?`свернуть до ${cut} уроков`:`ещё ${L.length-cut} уроков до ${fmtT(L[L.length-1][1])}`}</button>`:''}</div>`;};
+ const other=st.day?0:1;
+ document.getElementById('bells-b').innerHTML=`<div class="bells-g">${card(st.day,false)}${card(other,true)}</div>
+  <button type="button" class="lnk" id="bells-alt">показать ${other?'субботу':'будни'}</button>
+  <p class="bells-src">${esc(BELLS.src)}. Урок - 40 минут.</p>`;}
+function renderSchool(){
+ const st=schoolState();
+ document.getElementById('sc-big').textContent=st.big;
+ document.getElementById('sc-small').textContent=st.small+
+  (st.foreign?` · по времени школы, там сейчас ${st.at}`:'');
+ const ring=document.getElementById('sc-ring');
+ ring.classList.toggle('off',!st.ring);
+ if(st.ring){document.getElementById('sc-arc').style.strokeDasharray=
+   (113.1*Math.min(1,Math.max(0,st.ring.frac))).toFixed(1)+' 113.1';
+  document.getElementById('sc-n').textContent=st.ring.n;}
+ bellsTable();}
+renderSchool();
+// Перерисовка на границе минуты, а не «каждые 60 секунд от загрузки»: иначе
+// «до звонка 28 мин» отставало бы от часов до минуты. Возврат из фона - тоже
+// повод: таймеры в свёрнутой вкладке телефон замораживает.
+(function tick(){setTimeout(()=>{renderSchool();tick();},60000-Date.now()%60000+300);})();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)renderSchool();});
+document.getElementById('bells-b').addEventListener('click',e=>{
+ const more=e.target.closest('[data-more]');
+ if(more){const c=more.closest('.m'); c.classList.toggle('all');
+  const L=BELLS.days[+more.dataset.more].lessons, cut=7;
+  more.textContent=c.classList.contains('all')?`свернуть до ${cut} уроков`
+   :`ещё ${L.length-cut} уроков до ${fmtT(L[L.length-1][1])}`; return;}
+ const alt=e.target.closest('#bells-alt');
+ if(alt){const c=document.querySelector('#bells-b .m.alt'); c.hidden=!c.hidden;
+  c.closest('.bells-g').classList.toggle('two',!c.hidden);
+  alt.textContent=(c.hidden?'показать ':'скрыть ')+(c.dataset.k==='1'?'субботу':'будни');}});
+
 // пояснения по вкладкам
 const EXPL={
  bdays:[['Что в календаре','Даты платежей по графику сбора, дни рождения детей и учителя, даты мероприятий. Всё из журнала, вручную ничего не вносится.'],
@@ -1588,7 +1744,7 @@ const EXPL={
   ['Дни считаются от сегодня','«Через сколько дней» и подсветка ближайших двух недель берутся от настоящего сегодняшнего дня, а не от даты сборки: открыв ту же страницу через неделю, вы увидите обновившийся отсчёт. Деньги так не умеют - остаток, долги и доли посчитаны на дату отчёта, она указана под итогами.'],
   ['Планируемые события','Съёмки, театры, экскурсии. Метка «из кассы» (фиолетовая): касса заплатит организатору и потом спишет с каждого участника его долю, отдельно платить не надо. Метка «платят сами» (зелёная): родители платят организатору напрямую, в кассу эти деньги не идут. На остаток и долю расходов событие влияет только после того, как касса его оплатила. Сумма в заголовке - цена с одного человека.'],
   ['Порядок месяцев','По учебному году, с сентября. Текущий месяц обведён рамкой, ближайшие две недели подсвечены жёлтым.'],
-  ['Расписание звонков','Блок под календарём, свёрнут, раскрывается нажатием. Взят из приказа директора от 01.09.2026, к деньгам отношения не имеет и в печать не идёт. Показаны все уроки, а не только первые пять-шесть: страницей могут пользоваться и старшие братья и сёстры.']],
+  ['Сейчас в школе','Плашка сверху считает по живым часам, какой урок идёт и сколько до звонка, и обновляется раз в минуту. Время школьное (Кольцово, UTC+7): если телефон в другом поясе, об этом сказано в строке под номером урока. Нажатие раскрывает расписание звонков из приказа директора от 01.09.2026; к деньгам оно отношения не имеет и в печать не идёт.']],
  sbory:[['Что такое сбор','Отдельная тема со своей суммой и своим списком участников. Кто в мероприятии не участвует, за него не платит и в его расходах не участвует.'],
   ['График платежей','Сумма за год разбита на части с датами. Планка «к сроку» - нарастающий итог по этому графику: все шаги, чья дата уже наступила на дату отчёта. Отдельно объявлять новую сумму не нужно, планка поднимается сама с каждой датой графика. В самом графике ближайший шаг выделен цветом, а пройденные показаны серым.'],
   ['Долг за год и долг к сроку','Главное число - долг за год: сколько осталось внести до полной суммы. Долг к сроку - его часть, которую ждут к ближайшей дате графика; она указана рядом. Закрыть ближайший срок не значит рассчитаться: за год может остаться ещё сумма, просто её срок пока не наступил.'],
@@ -1899,7 +2055,7 @@ document.addEventListener('click',e=>{
 PAGE = PAGE.replace("\u2014", "-").replace("\u2013", "-")
 PAYLOAD = ("ENC:" + encrypt_payload(DATA, PASSWORD)) if PASSWORD else DATA
 open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLOAD, ensure_ascii=False) if PASSWORD else DATA)
-                                        .replace("__BELLS__", BELLS_HTML)
+                                        .replace("__BELLS__", BELLS_JSON)
                                         .replace("__ASOF__", AS_OF.strftime("%d.%m.%Y"))
                                         .replace("__TREAS__", TREASURER_LABEL)
                                         .replace("__SEARCHPH__", "Найти по фамилии или имени…")
