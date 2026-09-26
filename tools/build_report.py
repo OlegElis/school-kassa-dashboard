@@ -481,6 +481,71 @@ for s in sbory:
 # Планируемые события идут в тот же календарь, но своей меткой: «срок» - это
 # деньги в кассу, «платят сами» - деньги мимо неё. На расчёты не влияют.
 EVENTS += plans
+
+# Расписание звонков - единственный блок страницы не про деньги: казначей
+# попросил вывести его на вкладку «События», чтобы родитель не искал бумажку.
+# Источник: приказ директора школы от 01.09.2026. Из журнала кассы это не
+# читается - журнал про деньги, - поэтому константа здесь, а не лист в xlsx.
+# При смене расписания сверять с новым приказом и править руками.
+#
+# ВНИМАНИЕ, пятый урок будней. В приказе он напечатан как «11.40 - 11.20»:
+# конец раньше начала, это опечатка школы. Здесь стоит 12:20 - по шагу
+# остальных уроков (40 минут). При следующей сверке с бумагой НЕ «исправлять»
+# обратно на 11:20: проверка ниже такую правку остановит.
+#
+# В блок идут все уроки, не только первые пять-шесть второклассника: страницей
+# могут пользоваться старшие братья и сёстры. В шифрованный payload расписание
+# не кладётся - оно не тайна, и в верификацию как данные не идёт. В печать блок
+# не выводится (см. @media print).
+BELLS_SOURCE = "Приказ директора от 01.09.2026"
+BELLS = (
+    ("Понедельник - пятница", (
+        ("8:00", "8:40"), ("8:50", "9:30"), ("9:40", "10:20"), ("10:40", "11:20"),
+        ("11:40", "12:20"), ("12:30", "13:10"), ("13:20", "14:00"), ("14:15", "14:55"),
+        ("15:10", "15:50"), ("16:05", "16:45"), ("16:50", "17:30"), ("17:35", "18:15"),
+        ("18:20", "19:00"),
+    )),
+    ("Суббота", (
+        ("8:00", "8:40"), ("8:45", "9:25"), ("9:30", "10:10"), ("10:20", "11:00"),
+        ("11:10", "11:50"), ("12:00", "12:40"), ("12:45", "13:25"),
+    )),
+)
+
+
+def _bells_check():
+    """Урок ровно 40 минут, и уроки идут по порядку. Ловит опечатку приказа
+    (см. комментарий к BELLS) и любую ошибку при следующем переносе с бумаги."""
+    def mins(t):
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
+    for day, lessons in BELLS:
+        prev_end = 0
+        for i, (a, b) in enumerate(lessons, 1):
+            if mins(b) - mins(a) != 40:
+                raise SystemExit(f"Расписание звонков, {day}, урок {i}: {a}-{b} - "
+                                 f"не 40 минут. Сверьте с приказом, см. комментарий к BELLS.")
+            if mins(a) < prev_end:
+                raise SystemExit(f"Расписание звонков, {day}, урок {i}: начало {a} "
+                                 f"раньше конца предыдущего урока.")
+            prev_end = mins(b)
+
+
+def _bells_html():
+    """Свёрнутый по умолчанию <details>: раскрывается нажатием без скрипта,
+    поэтому работает и до расшифровки скриптом, и при любой ошибке в нём."""
+    cols = []
+    for day, lessons in BELLS:
+        rows = "".join(f'<li><b>{i}</b><span>{a}</span><i>-</i><span>{b}</span></li>'
+                       for i, (a, b) in enumerate(lessons, 1))
+        cols.append(f'<div class="m"><h2>{day}</h2><ol>{rows}</ol></div>')
+    return ('<details class="bells" id="bells">'
+            '<summary><span>Расписание звонков</span><span class="chev">\u25be</span></summary>'
+            f'<p class="bells-src">{BELLS_SOURCE}. Урок - 40 минут.</p>'
+            f'<div class="bells-g">{"".join(cols)}</div></details>')
+
+
+_bells_check()
+BELLS_HTML = _bells_html()
 DATA = json.dumps({"t": totals, "events": EVENTS, "sbory": sbory,
                    "spends": all_spends, "promises": promises, "flow": flow,
                    "kids": [{a: b for a, b in k.items() if a not in ("row", "col", "raw")} for k in kids]},
@@ -830,6 +895,26 @@ PAGE = r"""<!DOCTYPE html>
  .k-due{color:var(--bad);border-color:#f3c9c6;} .k-event{color:var(--accent);border-color:#c9d6ee;}
  .k-plan{color:var(--good);border-color:#bcdcd8;}
  .m .none{color:#c9ced7;font-size:12.5px;}
+ /* Расписание звонков - под календарём, свёрнуто. Нативный <details>: раскрытие
+    без скрипта. Маркер браузера убран и заменён общим шевроном страницы. Высота
+    заголовка не меньше 44 px - цель для пальца. */
+ .bells{background:var(--bg);border:1px solid var(--line);border-radius:11px;margin-top:14px;}
+ .bells summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;
+                align-items:center;padding:11px 14px;font-size:14.5px;font-weight:700;
+                color:var(--accent);border-radius:11px;}
+ .bells summary::-webkit-details-marker{display:none;}
+ .bells summary .chev{color:var(--dim);}
+ .bells[open] summary .chev{transform:rotate(180deg);}
+ .bells-src{margin:0 14px 10px;font-size:12.5px;color:var(--dim);}
+ /* Один столбец на телефоне, два рядом от 560 px - как у календаря. */
+ .bells-g{display:grid;grid-template-columns:1fr;gap:8px;padding:0 10px 10px;}
+ @media(min-width:560px){.bells-g{grid-template-columns:repeat(2,minmax(0,1fr));}}
+ .bells ol{list-style:none;margin:0;padding:0;font-size:13.5px;font-variant-numeric:tabular-nums;}
+ .bells li{display:grid;grid-template-columns:24px 5.5ch 1ch 5.5ch;gap:0 4px;
+           padding:2px 0;align-items:baseline;}
+ .bells li b{color:var(--dim);font-weight:600;}
+ .bells li span:first-of-type{text-align:right;}
+ .bells li i{font-style:normal;color:var(--dim);text-align:center;}
  .mgroup{margin-bottom:12px;}
  .mhead{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;
         color:var(--accent);margin:0 0 6px 2px;text-transform:uppercase;letter-spacing:.03em;}
@@ -953,6 +1038,8 @@ PAGE = r"""<!DOCTYPE html>
   #m-flow,#m-out,#m-in,.modes{display:none!important;} .print-only{display:block!important;}
   .expl .btn{display:none!important;} .expl dl{break-inside:avoid;}
   .row-b{display:block!important;} .row{break-inside:avoid;} .chips{display:none!important;}
+  /* Расписание звонков на бумагу не идёт: отчёт печатают ради денег. */
+  .bells{display:none!important;}
  }
 </style></head><body>
  <div id="gate">
@@ -1012,7 +1099,12 @@ PAGE = r"""<!DOCTYPE html>
   <button role="tab" id="tab-money" data-tab="money" aria-selected="false" tabindex="-1"
           aria-controls="pane-money ex-money">Деньги</button>
  </nav>
- <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays"></div>
+ <!-- Календарь скрипт рисует в #bd-cal, а не в саму панель: панель хранит ещё
+      расписание звонков - статичный блок из генератора, который innerHTML стёр бы. -->
+ <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays">
+  <div id="bd-cal"></div>
+  __BELLS__
+ </div>
  <div class="expl" id="ex-bdays"></div>
  <div id="pane-sbory" role="tabpanel" aria-labelledby="tab-sbory" hidden></div>
  <div class="expl" id="ex-sbory" hidden></div>
@@ -1432,7 +1524,7 @@ const soonList=ALL.filter(e=>e.in<=30);
 const byMonth={};ALL.forEach(e=>{(byMonth[e.m-1]=byMonth[e.m-1]||[]).push(e);});
 Object.values(byMonth).forEach(a=>a.sort((x,y)=>x.d-y.d));
 const order=[];for(let i=0;i<12;i++)order.push((8+i)%12);
-document.getElementById('pane-bdays').innerHTML=ALL.length?`
+document.getElementById('bd-cal').innerHTML=ALL.length?`
  ${soonList.length?`<div class="hero"><span class="lab">Ближайший месяц</span>
    ${soonList.map(e=>`<div class="hero-i clip"${
      e.note?` title="${esc(e.note)}"`:''}><b>${dd(e.d)}.${dd(e.m)}</b>
@@ -1466,7 +1558,8 @@ const EXPL={
   ['Ближайший месяц','Блок сверху показывает то, что произойдёт в течение ближайших недель, чтобы не листать календарь.'],
   ['Дни считаются от сегодня','«Через сколько дней» и подсветка ближайших двух недель берутся от настоящего сегодняшнего дня, а не от даты сборки: открыв ту же страницу через неделю, вы увидите обновившийся отсчёт. Деньги так не умеют - остаток, долги и доли посчитаны на дату отчёта, она указана под итогами.'],
   ['Планируемые события','Съёмки, экскурсии и прочее, что класс оплачивает мимо кассы: помечены «платят сами» и зелёным. Родители платят организатору напрямую, в кассу эти деньги не идут, на остаток и долю расходов не влияют, и долгом за такое событие никто не становится. Сумма в заголовке - цена с одного человека.'],
-  ['Порядок месяцев','По учебному году, с сентября. Текущий месяц обведён рамкой, ближайшие две недели подсвечены жёлтым.']],
+  ['Порядок месяцев','По учебному году, с сентября. Текущий месяц обведён рамкой, ближайшие две недели подсвечены жёлтым.'],
+  ['Расписание звонков','Блок под календарём, свёрнут, раскрывается нажатием. Взят из приказа директора от 01.09.2026, к деньгам отношения не имеет и в печать не идёт. Показаны все уроки, а не только первые пять-шесть: страницей могут пользоваться и старшие братья и сёстры.']],
  sbory:[['Что такое сбор','Отдельная тема со своей суммой и своим списком участников. Кто в мероприятии не участвует, за него не платит и в его расходах не участвует.'],
   ['График платежей','Сумма за год разбита на части с датами. Планка «к сроку» - нарастающий итог по этому графику: все шаги, чья дата уже наступила на дату отчёта. Отдельно объявлять новую сумму не нужно, планка поднимается сама с каждой датой графика. В самом графике ближайший шаг выделен цветом, а пройденные показаны серым.'],
   ['Долг за год и долг к сроку','Главное число - долг за год: сколько осталось внести до полной суммы. Долг к сроку - его часть, которую ждут к ближайшей дате графика; она указана рядом. Закрыть ближайший срок не значит рассчитаться: за год может остаться ещё сумма, просто её срок пока не наступил.'],
@@ -1777,6 +1870,7 @@ document.addEventListener('click',e=>{
 PAGE = PAGE.replace("\u2014", "-").replace("\u2013", "-")
 PAYLOAD = ("ENC:" + encrypt_payload(DATA, PASSWORD)) if PASSWORD else DATA
 open(OUT, "w", encoding="utf-8").write(PAGE.replace("__DATA__", json.dumps(PAYLOAD, ensure_ascii=False) if PASSWORD else DATA)
+                                        .replace("__BELLS__", BELLS_HTML)
                                         .replace("__ASOF__", AS_OF.strftime("%d.%m.%Y"))
                                         .replace("__TREAS__", TREASURER_LABEL)
                                         .replace("__SEARCHPH__", "Найти по фамилии или имени…")
