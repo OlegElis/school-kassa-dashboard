@@ -954,6 +954,12 @@ PAGE = r"""<!DOCTYPE html>
  .sline .sl-t b{font-weight:600;}
  .sline .sl-go{flex:none;color:var(--accent);font-size:12.5px;}
  .sline .sl-go .chev{font-size:14px;margin-left:2px;transition:none;}
+ /* Одна строка без переноса. Самый длинный текст - «Понедельник · 13-й урок ·
+    до звонка 30 мин»: на 390 px помещается с подписью «звонки ›», до 400 px
+    шрифт чуть меньше, до 375 px от подписи остаётся один шеврон - кнопка
+    подписана через aria-label, а полный текст стоит в плашке на «Событиях». */
+ @media(max-width:400px){.sline{font-size:12px;padding:6px 10px;gap:6px;}}
+ @media(max-width:375px){.sline .sl-go{font-size:0;} .sline .sl-go .chev{font-size:15px;}}
  .sline.st-break .dot{background:var(--warn);}
  .sline.st-off{color:var(--dim);} .sline.st-off .dot{background:#c9ced7;}
  /* Плашка - summary нативного <details>: нажатие раскрывает таблицу звонков.
