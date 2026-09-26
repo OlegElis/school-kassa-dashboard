@@ -940,32 +940,15 @@ PAGE = r"""<!DOCTYPE html>
  .k-plan{color:var(--good);border-color:#bcdcd8;}
  .k-kassa{color:var(--kassa);border-color:#d9cdf0;}
  .m .none{color:#c9ced7;font-size:12.5px;}
- /* «Сейчас в школе» живёт в двух местах с одним кодом: статусная строка под
-    заголовком и плашка на «Событиях». Состояние - класс st-* на обоих: урок
-    (синий), перемена (янтарный: не синий, чтобы отличалась от урока, и не
-    красный - это не срок и не долг), до уроков (синий), вечер и воскресенье
-    (st-off: серая полоска слева, кольцо пустое). Приглушить, но не убрать: пустое
-    место на странице читается как поломка. */
- .sline{display:flex;align-items:center;gap:8px;width:100%;margin:-6px 0 14px;
-        padding:6px 12px;min-height:36px;border:0;border-radius:8px;background:#eef1f6;
-        font:inherit;font-size:13px;color:var(--ink);cursor:pointer;text-align:left;}
- .sline .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent);}
- .sline .sl-t{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
- .sline .sl-t b{font-weight:600;}
- .sline .sl-go{flex:none;color:var(--accent);font-size:12.5px;}
- .sline .sl-go .chev{font-size:14px;margin-left:2px;transition:none;}
- /* Одна строка без переноса. Самый длинный текст - «Понедельник · 13-й урок ·
-    до звонка 30 мин»: на 390 px помещается с подписью «звонки ›», до 400 px
-    шрифт чуть меньше, до 375 px от подписи остаётся один шеврон - кнопка
-    подписана через aria-label, а полный текст стоит в плашке на «Событиях». */
- @media(max-width:400px){.sline{font-size:12px;padding:6px 10px;gap:6px;}}
- @media(max-width:375px){.sline .sl-go{font-size:0;} .sline .sl-go .chev{font-size:15px;}}
- .sline.st-break .dot{background:var(--warn);}
- .sline.st-off{color:var(--dim);} .sline.st-off .dot{background:#c9ced7;}
+ /* «Сейчас в школе» - одна плашка под заголовком, над плитками денег. Состояние -
+    класс st-*: урок (синий), перемена (янтарный: не синий, чтобы отличалась от
+    урока, и не красный - это не срок и не долг), до уроков (синий), вечер и
+    воскресенье (st-off: серая полоска слева, кольцо пустое). Приглушить, но не
+    убрать: пустое место на странице читается как поломка. */
  /* Плашка - summary нативного <details>: нажатие раскрывает таблицу звонков.
     Маркер браузера убран, шеврон стоит у подписи. Высота не меньше 44 px - цель
     для пальца. Полоска слева - border-left, у st-off серая. */
- .bells{background:var(--bg);border:1px solid var(--line);border-radius:11px;margin-bottom:14px;}
+ .bells{background:var(--bg);border:1px solid var(--line);border-radius:11px;margin:-4px 0 14px;}
  .bells summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;
                 padding:10px 14px 10px 12px;min-height:44px;border-radius:11px;
                 border-left:4px solid var(--accent);}
@@ -1142,7 +1125,7 @@ PAGE = r"""<!DOCTYPE html>
   .expl .btn{display:none!important;} .expl dl{break-inside:avoid;}
   .row-b{display:block!important;} .row{break-inside:avoid;} .chips{display:none!important;}
   /* «Сейчас в школе» на бумагу не идёт: отчёт печатают ради денег. */
-  .bells,.sline{display:none!important;}
+  .bells{display:none!important;}
  }
 </style></head><body>
  <div id="gate">
@@ -1178,13 +1161,26 @@ PAGE = r"""<!DOCTYPE html>
     <div class="sub">Учебный год 2026/2027 · отчёт на __ASOF__ · казначей __TREAS__</div></div>
   </div>
  </header>
- <!-- Статусная строка «Сейчас в школе»: тонкая полоса между заголовком и деньгами,
-      не плитка. Нажатие ведёт на «События» и подкручивает к плашке. Текст ставит
-      скрипт, тот же, что у плашки. В печать не идёт. -->
- <button type="button" class="sline" id="sline" aria-label="Сейчас в школе: открыть расписание звонков">
-  <span class="dot" aria-hidden="true"></span><span class="sl-t" id="sl-t"></span>
-  <span class="sl-go">звонки <span class="chev">&#8250;</span></span>
- </button>
+ <!-- «Сейчас в школе»: одна плашка на странице, под заголовком и над деньгами.
+      Это summary нативного <details>: нажатие раскрывает таблицу звонков прямо
+      под ней. Текст и кольцо заполняет скрипт раз в минуту. В печать не идёт.
+      До 26.09.2026 плашка стояла на «Событиях», а здесь была тонкая строка-дубль;
+      на телефоне обе оказывались на одном экране и повторяли друг друга. -->
+ <details class="bells" id="bells">
+  <summary id="school" aria-label="Сейчас в школе; раскрыть расписание звонков">
+   <div class="sc-t">
+    <span class="lab" id="sc-lab"></span>
+    <b class="sc-big" id="sc-big"></b>
+    <i class="sc-small" id="sc-small"></i>
+   </div>
+   <svg class="ring" id="sc-ring" viewBox="0 0 44 44" aria-hidden="true">
+    <circle class="tr" cx="22" cy="22" r="18"/>
+    <circle class="pr" id="sc-arc" cx="22" cy="22" r="18"/>
+    <text id="sc-n" x="22" y="22"></text>
+   </svg>
+  </summary>
+  <div class="bells-b" id="bells-b"></div>
+ </details>
  <div class="tiles" id="tiles"></div>
  <!-- Дата денег стоит вплотную к плиткам, а не только в подписи под заголовком:
       именно здесь родитель читает остаток и именно здесь может решить, что тот
@@ -1209,28 +1205,7 @@ PAGE = r"""<!DOCTYPE html>
   <button role="tab" id="tab-money" data-tab="money" aria-selected="false" tabindex="-1"
           aria-controls="pane-money ex-money">Деньги</button>
  </nav>
- <!-- Календарь скрипт рисует в #bd-cal, а не в саму панель: над ним живёт плашка
-      «Сейчас в школе» со своим каркасом, который innerHTML календаря стёр бы.
-      Плашка - summary нативного <details>: нажатие на неё раскрывает таблицу
-      звонков. Текст и кольцо заполняет скрипт раз в минуту. -->
- <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays">
-  <details class="bells" id="bells">
-   <summary id="school" aria-label="Сейчас в школе; раскрыть расписание звонков">
-    <div class="sc-t">
-     <span class="lab" id="sc-lab"></span>
-     <b class="sc-big" id="sc-big"></b>
-     <i class="sc-small" id="sc-small"></i>
-    </div>
-    <svg class="ring" id="sc-ring" viewBox="0 0 44 44" aria-hidden="true">
-     <circle class="tr" cx="22" cy="22" r="18"/>
-     <circle class="pr" id="sc-arc" cx="22" cy="22" r="18"/>
-     <text id="sc-n" x="22" y="22"></text>
-    </svg>
-   </summary>
-   <div class="bells-b" id="bells-b"></div>
-  </details>
-  <div id="bd-cal"></div>
- </div>
+ <div id="pane-bdays" role="tabpanel" aria-labelledby="tab-bdays"><div id="bd-cal"></div></div>
  <div class="expl" id="ex-bdays"></div>
  <div id="pane-sbory" role="tabpanel" aria-labelledby="tab-sbory" hidden></div>
  <div class="expl" id="ex-sbory" hidden></div>
@@ -1680,12 +1655,11 @@ document.querySelectorAll('#pane-bdays .hero-i .pn').forEach(n=>{
 document.getElementById('pane-bdays').addEventListener('click',e=>{
  const n=e.target.closest('.hero-i.more'); if(n)n.classList.toggle('clip');});
 
-// «Сейчас в школе». Два места с одним кодом: статусная строка под заголовком
-// (#sline) и плашка на «Событиях» (#bells, summary таблицы звонков). Единственное
-// место на странице, где важна минута, поэтому у него живые часы телефона без
-// обнуления времени суток (NOW календаря - те же часы, но полночь) и пересчёт по
-// setInterval раз в минуту: вкладка, открытая в 10:52 и забытая, в 11:20 сама
-// покажет перемену. Секунды не показываются, поэтому чаще не нужно.
+// «Сейчас в школе» - плашка под заголовком (#bells, summary таблицы звонков).
+// Единственное место на странице, где важна минута, поэтому у него живые часы
+// телефона без обнуления времени суток (NOW календаря - те же часы, но полночь)
+// и пересчёт по setInterval раз в минуту: вкладка, открытая в 10:52 и забытая,
+// в 11:20 сама покажет перемену. Секунды не показываются, поэтому чаще не нужно.
 //
 // Считается по школьному времени, а не по часам телефона: школа в Кольцово
 // (Новосибирск), UTC+7 круглый год, а родитель может открыть страницу в поездке
@@ -1701,8 +1675,7 @@ const fmtD=m=>m>=60?Math.floor(m/60)+' ч'+(m%60?' '+m%60+' мин':''):m+' ми
 const nth=i=>i+'-й';
 // Состояние: st - класс (lesson/break/before/off), day - чей график (0 будни,
 // 1 суббота), cur - индекс идущего урока, past - сколько уроков прошло,
-// ring - {frac,n} или null (пустое кольцо), line - короткий текст для строки,
-// big/small - плашка. Одни состояния для строки и плашки, разный объём текста.
+// ring - {frac,n} или null (пустое кольцо), big/small - крупная и мелкая строки.
 function schoolState(){
  const n=new Date(), sch=new Date(n.getTime()+SCHOOL_TZ*60000);
  const dow=sch.getUTCDay(), m=sch.getUTCHours()*60+sch.getUTCMinutes();
@@ -1714,29 +1687,29 @@ function schoolState(){
            school:dow!==0,foreign:n.getTimezoneOffset()!==-SCHOOL_TZ,at:fmtT(m)};
  const satNote=st.day?' · по субботнему графику':'';
  if(dow===0){
-  st.big='Выходной · '+nextFirst(); st.line='выходной';
+  st.big='Выходной · '+nextFirst();
   st.small=`будни: ${wd.length} уроков до ${fmtT(wd[wd.length-1][1])}, суббота: ${sat.length} до ${fmtT(sat[sat.length-1][1])}`;
   return st;}
  const L=st.day?sat:wd, last=L[L.length-1];
  if(m<L[0][0]){
-  st.st='before'; st.big='Первый урок в '+fmtT(L[0][0]); st.line='первый урок в '+fmtT(L[0][0]);
+  st.st='before'; st.big='Первый урок в '+fmtT(L[0][0]);
   st.small=`до начала ${fmtD(L[0][0]-m)} · сегодня ${L.length} уроков до ${fmtT(last[1])}`+satNote;
   st.ring={frac:0,n:1}; return st;}
  if(m>=last[1]){
-  st.big='Уроки закончились · '+nextFirst(); st.line='уроки закончились'; st.past=L.length;
+  st.big='Уроки закончились · '+nextFirst(); st.past=L.length;
   st.small=`сегодня было ${L.length} уроков, последний до ${fmtT(last[1])}`+satNote;
   return st;}
  for(let i=0;i<L.length;i++){
   const [a,b]=L[i], nx=L[i+1];
   if(m>=a&&m<b){
    st.st='lesson'; st.cur=i; st.past=i; st.ring={frac:(m-a)/(b-a),n:i+1};
-   st.big=`${nth(i+1)} урок · до звонка ${b-m} мин`; st.line=st.big;
+   st.big=`${nth(i+1)} урок · до звонка ${b-m} мин`;
    st.small=(nx?`перемена ${fmtT(b)}-${fmtT(nx[0])}, потом ${nth(i+2)} урок`
               :`последний урок, конец в ${fmtT(b)}`)+satNote;
    return st;}
   if(nx&&m>=b&&m<nx[0]){
    st.st='break'; st.past=i+1; st.ring={frac:(m-b)/(nx[0]-b),n:i+2};
-   st.big=`Перемена · ${nth(i+2)} урок в ${fmtT(nx[0])}`; st.line=`перемена · ${nth(i+2)} урок в ${fmtT(nx[0])}`;
+   st.big=`Перемена · ${nth(i+2)} урок в ${fmtT(nx[0])}`;
    st.small=`перемена ${fmtT(b)}-${fmtT(nx[0])} · осталось ${nx[0]-m} мин`+satNote;
    return st;}}
  return st;}
@@ -1759,9 +1732,8 @@ function bellsTable(st){
   <p class="bells-src">${esc(BELLS.src)}. Урок - 40 минут.</p>`;}
 function renderSchool(){
  const st=schoolState();
- ['sline','bells'].forEach(id=>{const el=document.getElementById(id);
-  el.classList.remove('st-lesson','st-break','st-before','st-off'); el.classList.add('st-'+st.st);});
- document.getElementById('sl-t').innerHTML=`<b>${st.dayName}</b> · ${esc(st.line)}`;
+ const el=document.getElementById('bells');
+ el.classList.remove('st-lesson','st-break','st-before','st-off'); el.classList.add('st-'+st.st);
  document.getElementById('sc-lab').innerHTML=`Сейчас в школе · <b>${st.dayName}</b>`+
   (st.foreign?' · по времени школы':'')+'<span class="chev">&#9662;</span>';
  document.getElementById('sc-big').textContent=st.big;
@@ -1775,11 +1747,6 @@ renderSchool();
 setInterval(renderSchool,60000);
 // Возврат из фона - тоже повод: таймеры в свёрнутой вкладке телефон замораживает.
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)renderSchool();});
-// Строка под заголовком ведёт к плашке: вкладка «События», полоса вкладок к
-// верху экрана - плашка стоит сразу под ней.
-document.getElementById('sline').addEventListener('click',()=>{
- selectTab(document.getElementById('tab-bdays'));
- window.scrollTo({top:document.getElementById('navtop').offsetTop-8});});
 document.getElementById('bells-b').addEventListener('click',e=>{
  const more=e.target.closest('[data-more]');
  if(more){const c=more.closest('.m'); c.classList.toggle('all');
@@ -1798,7 +1765,7 @@ const EXPL={
   ['Дни считаются от сегодня','«Через сколько дней» и подсветка ближайших двух недель берутся от настоящего сегодняшнего дня, а не от даты сборки: открыв ту же страницу через неделю, вы увидите обновившийся отсчёт. Деньги так не умеют - остаток, долги и доли посчитаны на дату отчёта, она указана под итогами.'],
   ['Планируемые события','Съёмки, театры, экскурсии. Метка «из кассы» (фиолетовая): касса заплатит организатору и потом спишет с каждого участника его долю, отдельно платить не надо. Метка «платят сами» (зелёная): родители платят организатору напрямую, в кассу эти деньги не идут. На остаток и долю расходов событие влияет только после того, как касса его оплатила. Сумма в заголовке - цена с одного человека.'],
   ['Порядок месяцев','По учебному году, с сентября. Текущий месяц обведён рамкой, ближайшие две недели подсвечены жёлтым.'],
-  ['Сейчас в школе','Строка под заголовком и плашка здесь считают по живым часам, какой урок идёт и сколько до звонка, и обновляются раз в минуту. Время и день недели школьные (Кольцово, UTC+7): если телефон в другом поясе, в подписи стоит «по времени школы». Нажатие на плашку раскрывает расписание звонков из приказа директора от 01.09.2026; к деньгам оно отношения не имеет и в печать не идёт.']],
+  ['Сейчас в школе','Плашка под заголовком страницы считает по живым часам, какой урок идёт и сколько до звонка, и обновляется раз в минуту. Время и день недели школьные (Кольцово, UTC+7): если телефон в другом поясе, в подписи стоит «по времени школы». Нажатие на плашку раскрывает расписание звонков из приказа директора от 01.09.2026; к деньгам оно отношения не имеет и в печать не идёт.']],
  sbory:[['Что такое сбор','Отдельная тема со своей суммой и своим списком участников. Кто в мероприятии не участвует, за него не платит и в его расходах не участвует.'],
   ['График платежей','Сумма за год разбита на части с датами. Планка «к сроку» - нарастающий итог по этому графику: все шаги, чья дата уже наступила на дату отчёта. Отдельно объявлять новую сумму не нужно, планка поднимается сама с каждой датой графика. В самом графике ближайший шаг выделен цветом, а пройденные показаны серым.'],
   ['Долг за год и долг к сроку','Главное число - долг за год: сколько осталось внести до полной суммы. Долг к сроку - его часть, которую ждут к ближайшей дате графика; она указана рядом. Закрыть ближайший срок не значит рассчитаться: за год может остаться ещё сумма, просто её срок пока не наступил.'],
