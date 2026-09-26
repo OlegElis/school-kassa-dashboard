@@ -962,22 +962,30 @@ PAGE = r"""<!DOCTYPE html>
  .sc-t .lab .chev{margin-left:4px;}
  .bells[open] .lab .chev{transform:rotate(180deg);}
  .sc-big{display:block;font-size:17px;font-weight:700;line-height:1.3;color:var(--ink);}
+ /* Рядом с кольцом 56 px «4-й урок · до звонка 28 мин» на 360 px в 17 px не
+    помещается в строку; 15,5 px хватает и самому длинному «13-й урок». */
+ @media(max-width:375px){.sc-big{font-size:15.5px;}}
  .bells.st-off .sc-big{color:var(--dim);font-weight:600;}
  .sc-small{display:block;font-style:normal;font-size:12.5px;color:var(--dim);
            line-height:1.4;margin-top:2px;}
- /* Кольцо: сколько урока (или перемены) прошло, внутри - номер урока. Дуга
-    начинается сверху: поворот на -90°, длина окружности 2π·18 ≈ 113.1.
-    В st-off кольцо остаётся, но пустое и без номера. */
- .ring{flex:none;width:46px;height:46px;}
- .ring circle{fill:none;stroke-width:4;}
+ /* Два кольца, 56 px, дуга 5 px со скруглёнными концами, от верха по часовой.
+    Внешнее (--accent) - учебный день от начала 1-го урока до конца 7-го (14:00 в
+    будни, 13:25 в субботу; хвост до 19:00 второму классу не нужен). После 7-го
+    урока замкнуто и приглушено. Внутреннее (янтарное, тот же --warn, что у
+    подписи перемены: на подложке --track его хватает для дуги 5 px) - урок
+    сплошной дугой, перемена - пунктиром из точек: dasharray почти нулевой штрих
+    с круглыми торцами даёт точки ~5 px через ~4 px, и фактура отличается от
+    сплошной с первого взгляда. Дуги - path из скрипта, не dasharray по
+    окружности: иначе пунктир нельзя было бы наложить на долю дуги. Пустая дуга -
+    пустой d, а не нулевая длина: круглый торец нарисовал бы точку. Без анимации:
+    страница обновляется раз в минуту, плавность тут ни к чему. */
+ .ring{flex:none;width:56px;height:56px;}
+ .ring circle,.ring path{fill:none;stroke-width:5;}
  .ring .tr{stroke:var(--track);}
- .ring .pr{stroke:var(--accent);stroke-linecap:round;stroke-dasharray:0 113.1;
-           transform:rotate(-90deg);transform-origin:50% 50%;}
- .bells.st-break .ring .pr{stroke:var(--warn);}
- /* Пустое кольцо (вечер, воскресенье, до уроков): дугу прячем целиком - у дуги
-    нулевой длины круглый торец всё равно рисует точку сверху. */
- .ring.empty .pr{display:none;}
- .ring text{font-size:16px;font-weight:700;fill:var(--ink);text-anchor:middle;
+ .ring .pr{stroke-linecap:round;}
+ .ring .o{stroke:var(--accent);} .ring.done .o{opacity:.35;}
+ .ring .i{stroke:var(--warn);} .ring.dashed .i{stroke-dasharray:0.01 9;}
+ .ring text{font-size:13px;font-weight:700;fill:var(--ink);text-anchor:middle;
             dominant-baseline:central;font-variant-numeric:tabular-nums;}
  .bells-b{padding:0 10px 10px;}
  .bells-src{margin:8px 4px 0;font-size:12.5px;color:var(--dim);}
@@ -1173,10 +1181,15 @@ PAGE = r"""<!DOCTYPE html>
     <b class="sc-big" id="sc-big"></b>
     <i class="sc-small" id="sc-small"></i>
    </div>
-   <svg class="ring" id="sc-ring" viewBox="0 0 44 44" aria-hidden="true">
-    <circle class="tr" cx="22" cy="22" r="18"/>
-    <circle class="pr" id="sc-arc" cx="22" cy="22" r="18"/>
-    <text id="sc-n" x="22" y="22"></text>
+   <!-- Два концентрических кольца, как кольца активности: внешнее синее - учебный
+        день (с 1-го урока до конца 7-го), внутреннее янтарное - урок (сплошная
+        дуга) или перемена (пунктир). Дуги - path, их рисует скрипт. -->
+   <svg class="ring" id="sc-ring" viewBox="0 0 56 56" aria-hidden="true">
+    <circle class="tr" cx="28" cy="28" r="24"/>
+    <path class="pr o" id="sc-o" d=""/>
+    <circle class="tr" cx="28" cy="28" r="17"/>
+    <path class="pr i" id="sc-i" d=""/>
+    <text id="sc-n" x="28" y="28"></text>
    </svg>
   </summary>
   <div class="bells-b" id="bells-b"></div>
@@ -1673,28 +1686,54 @@ const DAYS=['Воскресенье','Понедельник','Вторник','
 const fmtT=m=>Math.floor(m/60)+':'+String(m%60).padStart(2,'0');
 const fmtD=m=>m>=60?Math.floor(m/60)+' ч'+(m%60?' '+m%60+' мин':''):m+' мин';
 const nth=i=>i+'-й';
+// Дуга радиуса r от верха по часовой на долю f окружности (центр 28,28).
+// Целая окружность - двумя полудугами: одна дуга с совпадающими концами не рисуется.
+const arcPath=(r,f)=>{f=Math.min(1,Math.max(0,f)); if(f<=0)return '';
+ if(f>=1)return `M28 ${28-r}A${r} ${r} 0 1 1 28 ${28+r}A${r} ${r} 0 1 1 28 ${28-r}`;
+ const t=f*2*Math.PI, x=28+r*Math.sin(t), y=28-r*Math.cos(t);
+ return `M28 ${28-r}A${r} ${r} 0 ${t>Math.PI?1:0} 1 ${x.toFixed(2)} ${y.toFixed(2)}`;};
 // Состояние: st - класс (lesson/break/before/off), day - чей график (0 будни,
 // 1 суббота), cur - индекс идущего урока, past - сколько уроков прошло,
-// ring - {frac,n} или null (пустое кольцо), big/small - крупная и мелкая строки.
+// rings - {outer, done, inner, dashed, mark}: доля внешнего кольца, замкнуто ли
+// оно, доля внутреннего (null - пустое), пунктир ли оно, знак в центре;
+// big/small - крупная и мелкая строки.
 function schoolState(){
+ const st=schoolCore();
+ // Кольца. Внешнее считает учебный день: от начала 1-го урока до конца 7-го
+ // (dayEnd). После него - замкнуто, приглушено и с галочкой, даже если для
+ // старших идёт 8-й урок и текст его показывает: второму классу день окончен.
+ // Внутреннее: на уроке сплошная дуга за длительность урока, на перемене
+ // пунктир за длительность перемены, в остальное время пустая подложка. В центре
+ // номер урока (на перемене - следующего, к нему готовиться), после дня
+ // галочка, до уроков и в воскресенье тире.
+ const L=st.L, m=st.m, r={outer:0,done:false,inner:null,dashed:false,mark:'\u2013'};
+ if(L){
+  const dayStart=L[0][0], dayEnd=L[Math.min(6,L.length-1)][1];
+  if(m>=dayEnd){r.outer=1; r.done=true; r.mark='\u2713';}
+  else if(m>=dayStart){
+   r.outer=(m-dayStart)/(dayEnd-dayStart);
+   if(st.st==='lesson'||st.st==='break'){r.inner=st.frac; r.dashed=st.st==='break'; r.mark=String(st.n);}}
+  if(m<dayEnd)st.small+=` · день до ${fmtT(dayEnd)}`;}
+ st.rings=r; return st;}
+function schoolCore(){
  const n=new Date(), sch=new Date(n.getTime()+SCHOOL_TZ*60000);
  const dow=sch.getUTCDay(), m=sch.getUTCHours()*60+sch.getUTCMinutes();
  const wd=BELLS.days[0].lessons, sat=BELLS.days[1].lessons;
  // Следующий учебный день: после субботы и в воскресенье - понедельник.
  const nextFirst=()=>dow===6||dow===0?'в понедельник первый в '+fmtT(wd[0][0])
   :'завтра первый в '+fmtT((dow===5?sat:wd)[0][0]);
- const st={st:'off',dayName:DAYS[dow],day:dow===6?1:0,cur:-1,past:0,ring:null,
+ const st={st:'off',dayName:DAYS[dow],day:dow===6?1:0,cur:-1,past:0,frac:0,n:0,m:m,L:null,
            school:dow!==0,foreign:n.getTimezoneOffset()!==-SCHOOL_TZ,at:fmtT(m)};
  const satNote=st.day?' · по субботнему графику':'';
  if(dow===0){
   st.big='Выходной · '+nextFirst();
   st.small=`будни: ${wd.length} уроков до ${fmtT(wd[wd.length-1][1])}, суббота: ${sat.length} до ${fmtT(sat[sat.length-1][1])}`;
   return st;}
- const L=st.day?sat:wd, last=L[L.length-1];
+ const L=st.day?sat:wd, last=L[L.length-1]; st.L=L;
  if(m<L[0][0]){
   st.st='before'; st.big='Первый урок в '+fmtT(L[0][0]);
   st.small=`до начала ${fmtD(L[0][0]-m)} · сегодня ${L.length} уроков до ${fmtT(last[1])}`+satNote;
-  st.ring={frac:0,n:1}; return st;}
+  return st;}
  if(m>=last[1]){
   st.big='Уроки закончились · '+nextFirst(); st.past=L.length;
   st.small=`сегодня было ${L.length} уроков, последний до ${fmtT(last[1])}`+satNote;
@@ -1702,13 +1741,13 @@ function schoolState(){
  for(let i=0;i<L.length;i++){
   const [a,b]=L[i], nx=L[i+1];
   if(m>=a&&m<b){
-   st.st='lesson'; st.cur=i; st.past=i; st.ring={frac:(m-a)/(b-a),n:i+1};
+   st.st='lesson'; st.cur=i; st.past=i; st.frac=(m-a)/(b-a); st.n=i+1;
    st.big=`${nth(i+1)} урок · до звонка ${b-m} мин`;
    st.small=(nx?`перемена ${fmtT(b)}-${fmtT(nx[0])}, потом ${nth(i+2)} урок`
               :`последний урок, конец в ${fmtT(b)}`)+satNote;
    return st;}
   if(nx&&m>=b&&m<nx[0]){
-   st.st='break'; st.past=i+1; st.ring={frac:(m-b)/(nx[0]-b),n:i+2};
+   st.st='break'; st.past=i+1; st.frac=(m-b)/(nx[0]-b); st.n=i+2;
    st.big=`Перемена · ${nth(i+2)} урок в ${fmtT(nx[0])}`;
    st.small=`перемена ${fmtT(b)}-${fmtT(nx[0])} · осталось ${nx[0]-m} мин`+satNote;
    return st;}}
@@ -1738,10 +1777,11 @@ function renderSchool(){
   (st.foreign?' · по времени школы':'')+'<span class="chev">&#9662;</span>';
  document.getElementById('sc-big').textContent=st.big;
  document.getElementById('sc-small').textContent=st.small+(st.foreign?` · в школе сейчас ${st.at}`:'');
- document.getElementById('sc-arc').style.strokeDasharray=
-  st.ring?(113.1*Math.min(1,Math.max(0,st.ring.frac))).toFixed(1)+' 113.1':'0 113.1';
- document.getElementById('sc-ring').classList.toggle('empty',!st.ring||st.ring.frac<=0);
- document.getElementById('sc-n').textContent=st.ring?st.ring.n:'';
+ const rg=st.rings, ring=document.getElementById('sc-ring');
+ document.getElementById('sc-o').setAttribute('d',arcPath(24,rg.outer));
+ document.getElementById('sc-i').setAttribute('d',rg.inner==null?'':arcPath(17,rg.inner));
+ ring.classList.toggle('done',rg.done); ring.classList.toggle('dashed',rg.dashed);
+ document.getElementById('sc-n').textContent=rg.mark;
  bellsTable(st);}
 renderSchool();
 setInterval(renderSchool,60000);
