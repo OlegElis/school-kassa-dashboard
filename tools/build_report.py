@@ -968,25 +968,23 @@ PAGE = r"""<!DOCTYPE html>
  .bells.st-off .sc-big{color:var(--dim);font-weight:600;}
  .sc-small{display:block;font-style:normal;font-size:12.5px;color:var(--dim);
            line-height:1.4;margin-top:2px;}
- /* Два кольца, 56 px, дуга 5 px со скруглёнными концами, от верха по часовой.
-    Внешнее (--accent) - учебный день от начала 1-го урока до конца 7-го (14:00 в
-    будни, 13:25 в субботу; хвост до 19:00 второму классу не нужен). После 7-го
-    урока замкнуто и приглушено. Внутреннее (янтарное, тот же --warn, что у
-    подписи перемены: на подложке --track его хватает для дуги 5 px) - урок
-    сплошной дугой, перемена - пунктиром из точек: dasharray почти нулевой штрих
-    с круглыми торцами даёт точки ~5 px через ~4 px, и фактура отличается от
-    сплошной с первого взгляда. Дуги - path из скрипта, не dasharray по
-    окружности: иначе пунктир нельзя было бы наложить на долю дуги. Пустая дуга -
-    пустой d, а не нулевая длина: круглый торец нарисовал бы точку. Без анимации:
-    страница обновляется раз в минуту, плавность тут ни к чему. */
+ /* Одно кольцо, 56 px, дуга 5 px со скруглёнными концами, от верха по часовой,
+    цвет один - --accent. Урок - сплошная дуга за длительность урока, перемена -
+    точки за длительность перемены: dasharray почти нулевой штрих с круглыми
+    торцами даёт точки ~5 px через ~4 px, и фактура отличается от сплошной с
+    первого взгляда, поэтому второй цвет дуге не нужен; янтарный у перемены
+    остаётся только на полоске слева и на цифре. Дуга - path из скрипта, не
+    dasharray по окружности: иначе точки нельзя было бы наложить на долю дуги.
+    Пустая дуга - пустой d, а не нулевая длина: круглый торец нарисовал бы точку.
+    Без анимации: страница обновляется раз в минуту, плавность тут ни к чему. */
  .ring{flex:none;width:56px;height:56px;}
  .ring circle,.ring path{fill:none;stroke-width:5;}
  .ring .tr{stroke:var(--track);}
- .ring .pr{stroke-linecap:round;}
- .ring .o{stroke:var(--accent);} .ring.done .o{opacity:.35;}
- .ring .i{stroke:var(--warn);} .ring.dashed .i{stroke-dasharray:0.01 9;}
+ .ring .pr{stroke:var(--accent);stroke-linecap:round;}
+ .ring.dashed .pr{stroke-dasharray:0.01 9;}
  .ring text{font-size:13px;font-weight:700;fill:var(--ink);text-anchor:middle;
             dominant-baseline:central;font-variant-numeric:tabular-nums;}
+ .bells.st-break .ring text{fill:var(--warn);}
  .bells-b{padding:0 10px 10px;}
  .bells-src{margin:8px 4px 0;font-size:12.5px;color:var(--dim);}
  /* Один график на экране; второй - за строкой «показать», и тогда на широком
@@ -1181,14 +1179,13 @@ PAGE = r"""<!DOCTYPE html>
     <b class="sc-big" id="sc-big"></b>
     <i class="sc-small" id="sc-small"></i>
    </div>
-   <!-- Два концентрических кольца, как кольца активности: внешнее синее - учебный
-        день (с 1-го урока до конца 7-го), внутреннее янтарное - урок (сплошная
-        дуга) или перемена (пунктир). Дуги - path, их рисует скрипт. -->
+   <!-- Одно кольцо: урок сплошной дугой, перемена точками. Дугу рисует скрипт
+        (path). Второго кольца «учебный день» нет и не будет: класс учится во
+        вторую смену, начало плавает, число уроков в день неизвестно - «день 2В»
+        на странице не определён, и кольцо считало не то (пробовали 26.09.2026). -->
    <svg class="ring" id="sc-ring" viewBox="0 0 56 56" aria-hidden="true">
     <circle class="tr" cx="28" cy="28" r="24"/>
-    <path class="pr o" id="sc-o" d=""/>
-    <circle class="tr" cx="28" cy="28" r="17"/>
-    <path class="pr i" id="sc-i" d=""/>
+    <path class="pr" id="sc-arc" d=""/>
     <text id="sc-n" x="28" y="28"></text>
    </svg>
   </summary>
@@ -1694,27 +1691,18 @@ const arcPath=(r,f)=>{f=Math.min(1,Math.max(0,f)); if(f<=0)return '';
  return `M28 ${28-r}A${r} ${r} 0 ${t>Math.PI?1:0} 1 ${x.toFixed(2)} ${y.toFixed(2)}`;};
 // Состояние: st - класс (lesson/break/before/off), day - чей график (0 будни,
 // 1 суббота), cur - индекс идущего урока, past - сколько уроков прошло,
-// rings - {outer, done, inner, dashed, mark}: доля внешнего кольца, замкнуто ли
-// оно, доля внутреннего (null - пустое), пунктир ли оно, знак в центре;
+// ring - {frac, dashed, mark}: доля дуги (null - пустая подложка), точки ли это
+// (перемена), знак в центре: номер урока по школьной сетке звонков, на перемене -
+// номер следующего, в остальное время тире. Кольцо считает только урок или
+// перемену. Кольца «учебный день» нет намеренно: класс учится во вторую смену,
+// начало плавает, число уроков в день неизвестно - «день 2В» на странице не
+// определён, и такое кольцо считало не то (пробовали и убрали 26.09.2026).
 // big/small - крупная и мелкая строки.
 function schoolState(){
  const st=schoolCore();
- // Кольца. Внешнее считает учебный день: от начала 1-го урока до конца 7-го
- // (dayEnd). После него - замкнуто, приглушено и с галочкой, даже если для
- // старших идёт 8-й урок и текст его показывает: второму классу день окончен.
- // Внутреннее: на уроке сплошная дуга за длительность урока, на перемене
- // пунктир за длительность перемены, в остальное время пустая подложка. В центре
- // номер урока (на перемене - следующего, к нему готовиться), после дня
- // галочка, до уроков и в воскресенье тире.
- const L=st.L, m=st.m, r={outer:0,done:false,inner:null,dashed:false,mark:'\u2013'};
- if(L){
-  const dayStart=L[0][0], dayEnd=L[Math.min(6,L.length-1)][1];
-  if(m>=dayEnd){r.outer=1; r.done=true; r.mark='\u2713';}
-  else if(m>=dayStart){
-   r.outer=(m-dayStart)/(dayEnd-dayStart);
-   if(st.st==='lesson'||st.st==='break'){r.inner=st.frac; r.dashed=st.st==='break'; r.mark=String(st.n);}}
-  if(m<dayEnd)st.small+=` · день до ${fmtT(dayEnd)}`;}
- st.rings=r; return st;}
+ st.ring=st.st==='lesson'||st.st==='break'
+  ?{frac:st.frac,dashed:st.st==='break',mark:String(st.n)}:{frac:null,dashed:false,mark:'\u2013'};
+ return st;}
 function schoolCore(){
  const n=new Date(), sch=new Date(n.getTime()+SCHOOL_TZ*60000);
  const dow=sch.getUTCDay(), m=sch.getUTCHours()*60+sch.getUTCMinutes();
@@ -1736,7 +1724,7 @@ function schoolCore(){
   return st;}
  if(m>=last[1]){
   st.big='Уроки закончились · '+nextFirst(); st.past=L.length;
-  st.small=`сегодня было ${L.length} уроков, последний до ${fmtT(last[1])}`+satNote;
+  st.small=`сегодня по сетке ${L.length} уроков, до ${fmtT(last[1])}`+satNote;
   return st;}
  for(let i=0;i<L.length;i++){
   const [a,b]=L[i], nx=L[i+1];
@@ -1744,12 +1732,12 @@ function schoolCore(){
    st.st='lesson'; st.cur=i; st.past=i; st.frac=(m-a)/(b-a); st.n=i+1;
    st.big=`${nth(i+1)} урок · до звонка ${b-m} мин`;
    st.small=(nx?`перемена ${fmtT(b)}-${fmtT(nx[0])}, потом ${nth(i+2)} урок`
-              :`последний урок, конец в ${fmtT(b)}`)+satNote;
+              :`звонок в ${fmtT(b)}, дальше уроков по сетке нет`)+satNote;
    return st;}
   if(nx&&m>=b&&m<nx[0]){
    st.st='break'; st.past=i+1; st.frac=(m-b)/(nx[0]-b); st.n=i+2;
    st.big=`Перемена · ${nth(i+2)} урок в ${fmtT(nx[0])}`;
-   st.small=`перемена ${fmtT(b)}-${fmtT(nx[0])} · осталось ${nx[0]-m} мин`+satNote;
+   st.small=`осталось ${nx[0]-m} мин`+satNote;
    return st;}}
  return st;}
 function bellsTable(st){
@@ -1777,10 +1765,9 @@ function renderSchool(){
   (st.foreign?' · по времени школы':'')+'<span class="chev">&#9662;</span>';
  document.getElementById('sc-big').textContent=st.big;
  document.getElementById('sc-small').textContent=st.small+(st.foreign?` · в школе сейчас ${st.at}`:'');
- const rg=st.rings, ring=document.getElementById('sc-ring');
- document.getElementById('sc-o').setAttribute('d',arcPath(24,rg.outer));
- document.getElementById('sc-i').setAttribute('d',rg.inner==null?'':arcPath(17,rg.inner));
- ring.classList.toggle('done',rg.done); ring.classList.toggle('dashed',rg.dashed);
+ const rg=st.ring;
+ document.getElementById('sc-arc').setAttribute('d',rg.frac==null?'':arcPath(24,rg.frac));
+ document.getElementById('sc-ring').classList.toggle('dashed',rg.dashed);
  document.getElementById('sc-n').textContent=rg.mark;
  bellsTable(st);}
 renderSchool();
