@@ -329,9 +329,14 @@ def main():
         who = len({k["name"] for k, _ in personal})
         print(f"        личных списаний: {len(personal)} на {rub(pers_total)} ₽ "
               f"у {who} детей")
-    if own:
-        print(f"        доля расходов: {rub((t['spent'] - pers_total) / len(own))} ₽ "
-              f"общая на ребёнка")
+    # Общая доля считается внутри каждого сбора: по классу одной цифры нет,
+    # у сборов разный состав участников.
+    for s in sbory:
+        n = len(s.get("parts", []))
+        if n:
+            pers_s = sum(o["amount"] for _, o in personal if o.get("sbor") == s["title"])
+            print(f"        доля расходов в «{s['title']}»: "
+                  f"{rub((s.get('spent', 0) - pers_s) / n)} ₽ на участника ({n})")
 
     print("\nАрифметика")
     check(abs(t["collected"] - t["spent"] - t["rest"]) < 0.005,
@@ -380,14 +385,35 @@ def main():
               f"лента даёт {rub(got)}, а в итогах {rub(t['rest'])}")
 
     if own:
-        # Общая часть обязана быть одной на всех: разъехавшись, она означала бы,
-        # что расходы поделены не поровну, а личные списания тут ни при чём.
-        share = (t["spent"] - pers_total) / len(own)
+        # Общая часть делится поровну внутри сбора, а не по классу: у сборов
+        # разный состав, и ребёнок вне сбора его расходов не несёт. Поэтому для
+        # каждого сбора base у всех участников обязана быть одной и равной
+        # (потрачено по сбору − личные списания по сбору) / число участников.
+        # Личные списания тут ни при чём: они адресные и в base не входят.
+        lines, bad = [], []
+        for s in sbory:
+            n = len(s.get("parts", []))
+            if not n:
+                continue
+            pers_s = sum(o["amount"] for k in own for o in k.get("own", [])
+                         if o.get("sbor") == s["title"])
+            want = (s.get("spent", 0) - pers_s) / n
+            bys = [b for k in own for b in k.get("by", []) if b.get("sbor") == s["title"]]
+            off = [b for b in bys if abs(b.get("base", 0) - want) > 0.005]
+            # Участников в карточке столько же, сколько строк «по сборам» у детей:
+            # иначе доля делилась бы на одних, а показывалась другим.
+            if off or len(bys) != n:
+                bad.append(f"{s['title']}: ждали {rub(want)} ₽ на {n}, "
+                           f"строк по сбору {len(bys)}, не сошлось у {len(off)}")
+            lines.append(f"{s['title']} {rub(want)} ₽ ({n})")
+        check(not bad, "общая доля в сборе одна: " + ", ".join(lines),
+              "общая доля в сборе разъехалась - " + "; ".join(bad))
+        # Доля ребёнка по классу - сумма его долей по сборам. Та же проверка есть
+        # на сборке, но страница живёт отдельно от генератора, поэтому она и здесь.
         bad = [k for k in own
-               if abs(k.get("share", 0) - k.get("ownSum", 0) - share) > 0.005]
-        check(not bad, f"общая доля расходов у всех детей одна ({rub(share)} ₽)",
-              f"общая доля расходов (доля минус личные списания) разъехалась "
-              f"у {len(bad)} детей")
+               if abs(sum(b.get("share", 0) for b in k.get("by", [])) - k.get("share", 0)) > 0.005]
+        check(not bad, "доля каждого ребёнка равна сумме его долей по сборам",
+              f"доля по классу не равна сумме по сборам у {len(bad)} детей")
         # Сумма долей - это и есть всё потраченное: ни рубля не потерялось между
         # общей частью и адресной и ни рубля не посчиталось дважды.
         got = sum(k.get("share", 0) for k in own)
