@@ -200,6 +200,34 @@ def leak_check(html, data, spisok):
           f"имя из журнала попало на страницу - {'; '.join(leaked)}")
 
 
+def notes_check(data, spisok):
+    """Комментарий к сбору (лист «Сборы», колонка Q) с 01.10.2026 идёт на страницу.
+    Это текст казначея про устройство сбора, и имён детей в нём быть не должно.
+    Ищутся слова из колонки C «Учеников» (фамилия и имя, от начала слова - так
+    ловятся и склонения). Технические строки «Не ученик…» пропускаются: учителя
+    отдельно ищет leak_check, а соседний класс с деньгами и так назван на странице.
+    Проверяется payload, а не лист: важно то, что опубликовано."""
+    uch, first, last = spisok
+    words = set()
+    for r in range(first, last + 1):
+        note = str(uch.cell(row=r, column=12).value or "").strip().lower()
+        if note.startswith("не ученик"):
+            continue
+        words |= {w.casefold() for w in str(uch.cell(row=r, column=3).value or "").split()
+                  if len(w) >= 3}
+    bad, with_note = [], 0
+    for s in data["sbory"]:
+        text = str(s.get("note") or "").casefold()
+        if not text:
+            continue
+        with_note += 1
+        hit = sorted(w for w in words if re.search(r"(?<!\w)" + re.escape(w), text))
+        if hit:
+            bad.append(f"«{s['title']}»: {', '.join(hit)}")
+    check(not bad, f"в комментариях к сборам нет имён детей ({with_note} с комментарием)",
+          "в комментарии к сбору имя ребёнка - " + "; ".join(bad))
+
+
 def gate_check(html):
     """Ворота: код доступа не должен уходить в строку запроса.
 
@@ -420,6 +448,22 @@ def main():
         check(abs(got - t["spent"]) < 0.005,
               f"сумма долей всех детей равна «потрачено» ({rub(t['spent'])} ₽)",
               f"доли дают {rub(got)}, а потрачено {rub(t['spent'])}")
+    # Сбор без графика - тот, за который платит касса. Сроков у него нет, значит
+    # и долга быть не может ни у кого. А остатки участников (сдал минус доля)
+    # обязаны сложиться в остаток самого сбора: собрано минус потрачено.
+    for s in sbory:
+        if s.get("sched") or not s.get("parts"):
+            continue
+        n = len(s["parts"])
+        debts = [p for p in s["parts"] if p.get("debtY") or p.get("debtN")]
+        check(not debts, f"«{s['title']}»: сбор без графика, долгов нет ({n} участников)",
+              f"«{s['title']}»: сбор без графика, а долг стоит у {len(debts)} из {n}")
+        got = sum(p.get("rest", 0) for p in s["parts"])
+        want = s.get("collected", 0) - s.get("spent", 0)
+        check(abs(got - want) < 0.005,
+              f"«{s['title']}»: остатки участников = собрано − потрачено ({rub(want)} ₽)",
+              f"«{s['title']}»: остатки участников дают {rub(got)}, "
+              f"а собрано − потрачено = {rub(want)}")
     if personal:
         # Списание, адресованное не ученику класса, делило бы расходы на того,
         # между кем они не делятся.
@@ -453,6 +497,7 @@ def main():
     else:
         names_check(data, spisok)
         leak_check(html, data, spisok)
+        notes_check(data, spisok)
 
     # Казначей подписан коротко и после возврата полных детских имён: решение
     # родкома касалось списка детей, её фамилию наружу никто не выносил.

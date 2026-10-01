@@ -411,7 +411,10 @@ for r in range(B_FIRST, B_LAST + 1):
         own = sum(o["amount"] for o in k["own"] if o["sbor"] == title)
         sh = share + own
         parts.append({"ord": k["ord"], "name": k["name"], "paid": p,
-                      "debtY": dy, "debtN": dn, "rest": p - sh})
+                      "debtY": dy, "debtN": dn,
+                      # share - доля ребёнка в этом сборе, общая часть плюс адресное.
+                      # Карточка сбора, за который платит касса, показывает её у каждого.
+                      "share": sh, "rest": p - sh})
         k["by"].append({"sbor": title, "code": sb.cell(row=r, column=2).value or "",
                         "plan": per, "first": first, "paid": p,
                         "debtY": dy, "debtN": dn,
@@ -423,6 +426,7 @@ for r in range(B_FIRST, B_LAST + 1):
                "proof": str(rs.cell(row=e, column=9).value or "со слов").lower()}
               for e in range(RS_FIRST, RS_LAST + 1)
               if rs.cell(row=e, column=3).value == title and rs.cell(row=e, column=6).value]
+    sched = schedule(title)
     sbory.append({"code": sb.cell(row=r, column=2).value or "", "title": title, "per": per,
                   "first": first, "due": dt(sb.cell(row=r, column=6).value),
                   "dueFull": dt(sb.cell(row=r, column=7).value),
@@ -433,7 +437,14 @@ for r in range(B_FIRST, B_LAST + 1):
                   "debtN": num(sb.cell(row=r, column=13).value),
                   "spent": num(sb.cell(row=r, column=14).value),
                   "rest": num(sb.cell(row=r, column=16).value), "parts": parts, "spends": spends,
-                  "sched": schedule(title)})
+                  "sched": sched,
+                  # base - общая часть на участника (колонка O), note - комментарий
+                  # казначея (колонка Q, с 01.10.2026 идёт на страницу под шапкой карточки).
+                  # cash - сбор, за который платит касса: графика нет, а расход уже есть
+                  # либо сумма с участника не объявлена (per = 0). Сроков и долгов у
+                  # такого сбора нет, и карточка на вкладке «Сборы» рисуется иначе.
+                  "base": share, "note": str(sb.cell(row=r, column=17).value or "").strip(),
+                  "cash": not sched and (bool(spends) or not per)})
 
 # Личное списание, привязанное к сбору, в котором ребёнок не участвует (или к сбору
 # с другим названием), не попало бы ни в одну строку таблицы: доля ребёнка в шапке
@@ -474,8 +485,10 @@ for k in kids:
 
 # Колонка J - комментарий к расходу: расшифровка чека, «из чего сложилась сумма».
 # Родителям он отвечает на «куда ушли деньги» лучше категории, поэтому идёт на
-# страницу. Комментарий к сбору (лист «Сборы», колонка Q) - заметка казначея
-# и на страницу не выводится.
+# страницу. Комментарий к сбору (лист «Сборы», колонка Q) с 01.10.2026 тоже идёт
+# на страницу, под шапку карточки: там казначей объясняет, почему сбор устроен
+# так - кто платит, из чего сложилась сумма. Имён детей в нём быть не должно:
+# verify.py ищет там слова из списка класса и останавливает публикацию.
 all_spends = [{"date": dt(rs.cell(row=e, column=2).value), "sbor": rs.cell(row=e, column=3).value or "не привязан",
                "what": rs.cell(row=e, column=4).value or "", "cat": rs.cell(row=e, column=5).value or "без направления",
                "amount": num(rs.cell(row=e, column=6).value),
@@ -699,6 +712,9 @@ PAGE = r"""<!DOCTYPE html>
  .code{flex:none;font-size:11px;font-weight:700;color:var(--accent);background:#eef2fa;
        border-radius:6px;padding:3px 7px;margin-top:2px;}
  .card-top h2{margin:0;color:var(--ink);} .meta{color:var(--dim);font-size:12.5px;margin-top:3px;}
+ /* Комментарий казначея к сбору: тем же серым, что meta, но с нормальным интерлиньяжем,
+    это абзац, а не строка меток. */
+ .cnote{color:var(--dim);font-size:12.5px;margin-top:6px;line-height:1.45;}
  /* График платежей. Разделитель «·» лежит ВНУТРИ шага и попадает под его nowrap,
     поэтому при переносе точка уезжает вместе со своим шагом и не начинает строку,
     а сам шаг не разрывается посередине. */
@@ -732,6 +748,8 @@ PAGE = r"""<!DOCTYPE html>
  .idx{flex:none;min-width:20px;font-size:12px;color:var(--dim);
       font-variant-numeric:tabular-nums;text-align:right;}
  .dot.part{background:#d4a017;} .dot.no{background:var(--bad);}
+ /* Участник сбора, за который платит касса: ни «внёс», ни «должен» - точка нейтральная. */
+ .dot.soft{background:var(--dim);opacity:.45;}
  .amt{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600;}
  .amt.bad{color:var(--bad);} .amt.ok{color:var(--good);}
  .amt.soft{color:var(--dim);font-weight:400;}
@@ -1394,7 +1412,17 @@ function renderSbory(){
 document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
  const pct=s.plan?Math.min(100,Math.round(s.collected/s.plan*100)):0;
  const done=s.parts.filter(p=>!p.debtN).length;
+ // Сбор, за который платит касса (s.cash): графика и сроков нет, расход делится
+ // на участников поровну, и «внёс»/«рассчитался» здесь не о чём - никто никому
+ // не должен. У участника видна его доля в сборе (общая часть плюс адресное),
+ // что он сдал вперёд, и разница: минус - закрыто с общего счёта, плюс - переплата.
  const parts=[...s.parts].sort(cmp).map((p,pi)=>{
+  if(s.cash){
+   const r=Math.round((p.rest||0)*100)/100;
+   const right=r<0?`<span class="amt soft">за счёт общего счёта ${rub(-r)}</span>`
+     :(r>0?`<span class="amt ok">переплата ${rub(r)}</span>`:`<span class="amt soft">ровно по доле</span>`);
+   return `<li><span class="dot soft"></span><span class="idx">${pi+1}</span>${esc(p.name)}
+    <span class="tag">доля ${rub(p.share)}</span>${p.paid>0?`<span class="tag">сдал вперёд ${rub(p.paid)}</span>`:''}${right}</li>`;}
   const cls=!p.debtN?(p.debtY?'':''):(p.paid?'part':'no');
   // Срок сбора, а не общий: в этом списке у всех нехватка по одному и тому же сбору.
   const right=p.debtN?`<span class="amt bad">${s.due?`до ${dm(s.due)} - `:'нужно '}${rub(p.debtN)}</span>`
@@ -1418,7 +1446,10 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
   }).join('')}</div>`:'';
  const meta=[`${s.n} ${plural(s.n,'участник','участника','участников')}`];
  if(s.event)meta.push(`событие ${s.event.slice(0,5)}`);
- if(!sc.length){
+ if(s.cash){
+  // Общая часть на участника из колонки O; пока расхода нет, её не из чего посчитать.
+  meta.push(s.spent?`платит касса · по ${rub(s.base)} на участника`:'платит касса · сумма пока не известна');
+ }else if(!sc.length){
   if(s.first)meta.push(`по ${rub(s.first)}${s.due?' до '+s.due.slice(0,5):''}`);
   if(s.per&&s.per!==s.first)meta.push(`всего ${rub(s.per)}${s.dueFull?' до '+s.dueFull.slice(0,5):' - платежами в течение года'}`);
   // Ни графика, ни суммы за год, ни взноса к сроку: сбор объявлен, цифры ещё нет.
@@ -1427,20 +1458,23 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
  }
  return `<section class="card">
   <div class="card-top">${s.code?`<span class="code">${esc(s.code)}</span>`:''}
-   <div><h2>${esc(s.title)}</h2><div class="meta">${meta.join(' · ')}</div></div></div>
+   <div><h2>${esc(s.title)}</h2><div class="meta">${meta.join(' · ')}</div>
+    ${s.note?`<div class="cnote">${esc(s.note)}</div>`:''}</div></div>
   ${schedHtml}
   ${s.plan?`<div class="bar"><i style="width:${pct}%"></i></div>
    <div class="barlab"><span>собрано ${rub(s.collected)} из ${rub(s.plan)}</span><span>${pct}%</span></div>`:''}
   <div class="stats">
    <span>потрачено <b>${rub(s.spent)}</b></span>
-   <span>остаток <b class="good">${rub(s.rest)}</b></span>
+   ${s.cash?`${s.spent-s.collected>0?`<span>из общей кассы <b>${rub(s.spent-s.collected)}</b></span>`:''}
+   ${s.collected>0?`<span>собрано вперёд <b>${rub(s.collected)}</b></span>`:''}`
+   :`<span>остаток <b class="good">${rub(s.rest)}</b></span>
    <!-- Долг за год стоит перед сроком и здесь: иначе вкладка «Сборы» показывала бы
         главным то число, которое на остальной странице стало расшифровкой. -->
    <span>должны за год <b${s.debtY?' class="bad"':''}>${rub(s.debtY)}</b></span>
-   <span>из них к сроку${s.due?' '+dm(s.due):''} <b${s.debtN?' class="bad"':''}>${rub(s.debtN)}</b></span>
+   <span>из них к сроку${s.due?' '+dm(s.due):''} <b${s.debtN?' class="bad"':''}>${rub(s.debtN)}</b></span>`}
   </div>
   <div class="acts">
-   <button class="btn" data-toggle="pp${i}" aria-expanded="false">Участники · внесли к сроку ${done} из ${s.parts.length}<span class="chev">▾</span></button>
+   <button class="btn" data-toggle="pp${i}" aria-expanded="false">${s.cash?`Участники · ${s.parts.length}`:`Участники · внесли к сроку ${done} из ${s.parts.length}`}<span class="chev">▾</span></button>
    <button class="btn" data-toggle="ps${i}" aria-expanded="false">Расходы · ${s.spends.length}<span class="chev">▾</span></button>
   </div>
   <div class="panel" id="pp${i}"><ul class="list">${parts}</ul></div>
