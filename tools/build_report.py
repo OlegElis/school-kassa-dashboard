@@ -515,9 +515,10 @@ for s in sbory:
         EVENTS.append({"date": s["due"], "kind": "due", "code": s["code"],
                        "title": f'Внести {money(s["first"])} \u20bd - {s["title"]}',
                        "short": f'Внести {money(s["first"])} \u20bd'})
-    if s["event"]:
-        EVENTS.append({"date": s["event"], "kind": "event", "code": s["code"],
-                       "title": s["title"]})
+    # Дата события сбора (колонка H) в календарь НЕ идёт: само мероприятие лежит
+    # на листе «События» своей строкой, и из сбора оно вставало бы в календарь
+    # второй раз - под другим названием. У сбора дата остаётся только в meta
+    # карточки («событие 24.10»).
 # Планируемые события идут в тот же календарь, но своими метками: «срок» - это
 # деньги в кассу, «платят сами» - деньги мимо неё, «из кассы» - касса платит и
 # спишет с участников потом. На расчёты здесь не влияют.
@@ -664,6 +665,9 @@ PAGE = r"""<!DOCTYPE html>
  .tile .val{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;}
  .tile .tnote{font-size:11.5px;color:var(--dim);margin-top:4px;}
  .tile.rest{border-color:var(--good);} .tile.rest .val{color:var(--good);}
+ /* Остаток в минусе: касса пуста, казначей заплатил своими. Красным, как долг:
+    это и есть долг кассы перед казначеем, а зелёный минус читался бы как «хорошо». */
+ .tile.rest.neg{border-color:var(--bad);} .tile.rest.neg .val{color:var(--bad);}
  .tile.owed{border-color:#e3c26b;} .tile.owed .val{color:var(--warn);}
  /* Свободный остаток идёт отдельной строкой во всю ширину: он подводит итог по
     плиткам выше, и только так под цифрой помещается подпись, из чего он получен. */
@@ -945,16 +949,15 @@ PAGE = r"""<!DOCTYPE html>
  .m li.soon b,.m li.soon span{color:var(--warn);font-weight:700;}
  .m li i{font-style:normal;color:var(--dim);font-size:11px;}
  .m li.l-due b,.m li.l-due span{color:var(--bad);} .m li.l-due{font-weight:600;}
- .m li.l-event b,.m li.l-event span{color:var(--accent);}
- /* Событие мимо кассы - зелёным: красный уже занят сроком платежа, синий -
-    мероприятием сбора, и третьей денежной строке нельзя читаться как первые две. */
+ /* Событие мимо кассы - зелёным: красный уже занят сроком платежа, и второй
+    денежной строке нельзя читаться как первая. */
  .m li.l-plan b,.m li.l-plan span{color:var(--good);}
- /* Событие из кассы - фиолетовым: красный занят сроком, синий - мероприятием
-    сбора, зелёный - оплатой мимо кассы. Это не срок и не долг, поэтому не красный. */
+ /* Событие из кассы - фиолетовым: красный занят сроком, зелёный - оплатой мимо
+    кассы. Это не срок и не долг, поэтому не красный. */
  .m li.l-kassa b,.m li.l-kassa span{color:var(--kassa);}
  .k{font-size:11px;text-transform:uppercase;letter-spacing:.03em;border-radius:20px;
     padding:1px 7px;border:1px solid var(--line);color:var(--dim);}
- .k-due{color:var(--bad);border-color:#f3c9c6;} .k-event{color:var(--accent);border-color:#c9d6ee;}
+ .k-due{color:var(--bad);border-color:#f3c9c6;}
  .k-plan{color:var(--good);border-color:#bcdcd8;}
  .k-kassa{color:var(--kassa);border-color:#d9cdf0;}
  .m .none{color:#c9ced7;font-size:12.5px;}
@@ -1372,8 +1375,10 @@ const dueNote=(()=>{
   : s;})();
 // Пятый элемент - режим «Денег», куда ведёт плитка: «Собрано» в «Пришло»,
 // «Потрачено» в «Ушло», «Остаток» в Ленту. Плитки долга никуда не ведут.
+// Остаток ниже нуля - касса должна казначею: он заплатил своими, пока взносы не
+// пришли. Плитка краснеет и говорит это словами, иначе минус читается как опечатка.
 const tiles=[['Собрано',T.collected,'','','in'],['Потрачено',T.spent,'','','out'],
-             ['Остаток',T.rest,'rest','','flow']];
+             ['Остаток',T.rest,T.rest<0?'rest neg':'rest',T.rest<0?'касса должна казначею':'','flow']];
 if(T.dueYear)tiles.push(['Осталось внести за год',T.dueYear,'owed',dueNote]);
 // «Остаток» - все деньги кассы, «Свободный остаток» - то, что из них ещё никому
 // не обещано. Плитка появляется только когда обязательства есть.
@@ -1467,7 +1472,7 @@ document.getElementById('pane-sbory').innerHTML=D.sbory.map((s,i)=>{
    <span>потрачено <b>${rub(s.spent)}</b></span>
    ${s.cash?`${s.spent-s.collected>0?`<span>из общей кассы <b>${rub(s.spent-s.collected)}</b></span>`:''}
    ${s.collected>0?`<span>собрано вперёд <b>${rub(s.collected)}</b></span>`:''}`
-   :`<span>остаток <b class="good">${rub(s.rest)}</b></span>
+   :`<span>остаток <b class="${s.rest<0?'bad':'good'}">${rub(s.rest)}</b></span>
    <!-- Долг за год стоит перед сроком и здесь: иначе вкладка «Сборы» показывала бы
         главным то число, которое на остальной странице стало расшифровкой. -->
    <span>должны за год <b${s.debtY?' class="bad"':''}>${rub(s.debtY)}</b></span>
@@ -1660,9 +1665,9 @@ bd.forEach(b=>{const [d,m]=b.date.split('.').map(Number);const r=daysTo(d,m);
 ALL.sort((a,b)=>a.in-b.in);
 // «срок» - деньги в кассу, «платят сами» - мимо неё, родитель отдаёт их напрямую
 // организатору, «из кассы» - касса платит организатору и потом списывает с
-// участников, родителю отдельно платить не надо. Подпись «событие» занята
-// мероприятием сбора, оно уже оплачено кассой.
-const KIND={bd:'др',teacher:'др',due:'срок',event:'событие',plan:'платят сами',kassa:'из кассы'};
+// участников, родителю отдельно платить не надо. Мероприятие сбора (колонка H
+// листа «Сборы») своей строки не имеет: оно и так есть на листе «События».
+const KIND={bd:'др',teacher:'др',due:'срок',plan:'платят сами',kassa:'из кассы'};
 const dd=n=>String(n).padStart(2,'0');
 const yr=n=>{const a=n%10,b=n%100;
  if(b>=11&&b<=14)return n+' лет'; if(a===1)return n+' год';

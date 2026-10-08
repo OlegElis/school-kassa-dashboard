@@ -264,6 +264,34 @@ def rub(n):
     return s[:-3] if s.endswith(",00") else s
 
 
+def calendar_dupes(events):
+    """Пары событий календаря с одной датой и одним началом названия.
+
+    Так уже было: мероприятие сбора (колонка H листа «Сборы») и та же строка с
+    листа «События» вставали на один день - «Театр «Дом учёных» 24.10» и «Театр
+    «Дом учёных», спектакль…». Родитель видел два события и не знал, платить ли
+    дважды. Сравниваются первые три слова без пунктуации: полные названия у
+    дублей разные по замыслу, а начало - одно. У срока платежа («Внести N ₽ -
+    сбор») началом считается название сбора: два сбора с одинаковым шагом в один
+    день - не дубль, а две разные строки."""
+    def head(e):
+        title = e.get("title", "")
+        if e.get("kind") == "due" and " - " in title:
+            title = title.split(" - ", 1)[1]
+        words = re.sub(r"[^\w\s]", " ", title.lower()).split()
+        return " ".join(words[:3])
+    seen, dupes = {}, []
+    for e in events:
+        key = (e.get("date"), head(e))
+        if not key[1]:
+            continue
+        if key in seen:
+            dupes.append((e["date"], seen[key].get("title", ""), e.get("title", "")))
+        else:
+            seen[key] = e
+    return dupes
+
+
 def find_marks(node, path=""):
     """Обходит payload и возвращает [(путь, пометки, текст)] для каждого поля
     со служебной пометкой. Путь ведёт до конкретной записи и поля - иначе
@@ -511,6 +539,14 @@ def main():
           f"payload лежит в открытом виде: {', '.join(found)}")
 
     gate_check(html)
+
+    print("\nКалендарь")
+    events = data.get("events", [])
+    dupes = calendar_dupes(events)
+    check(not dupes, f"событий с одной датой и одним началом названия нет ({len(events)} в календаре)",
+          f"в календаре дубли - {len(dupes)} шт., одно событие попало дважды:")
+    for date, a, b in dupes:
+        print(f"          {date}: «{a}» и «{b}»")
 
     print("\nСлужебные пометки")
     marks = find_marks(data)
